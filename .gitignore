@@ -1,12 +1,8 @@
+# Python caches
 __pycache__/
 *.pyc
-.DS_Store
-.ipynb_checkpoints/
-*.egg-info/
-build/
-dist/
-.pytest_cache/
-results/**
-!results/.gitkeep
+*.pyo
+*.pyd
+
+# Data artifacts (keep folders, ignore CSVs)
 data/**/*.csv
-data/**/*.zip
