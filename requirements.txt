@@ -1,0 +1,10 @@
+pandas
+numpy
+scikit-learn
+statsmodels
+cvxpy
+matplotlib
+tqdm
+requests
+pyyaml
+pytest
