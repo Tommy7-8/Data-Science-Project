@@ -79,20 +79,58 @@ def _to_month_period(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def download_size_deciles() -> pd.DataFrame:
+    """
+    Download the 'Portfolios Formed on ME' table and extract the 10 *decile* portfolios only:
+    Lo 10, 2-Dec, 3-Dec, ..., 9-Dec, Hi 10  -> rename to ME1..ME10.
+    """
+    import re
     z = _download_zip(URL_SIZE_DECILES)
     csv_text = _read_csv_text(z)
     raw_tbl = _extract_monthly_table(csv_text)
-    dfm = _to_month_period(raw_tbl)
 
-    # Keep 10 size portfolios (ME1..ME10) if present
-    if len(dfm.columns) >= 10:
-        dfm = dfm.iloc[:, :10]
-        dfm.columns = [f"ME{i}" for i in range(1, 11)]
+    # Normalize column names for robust matching
+    cols = [str(c).strip() for c in raw_tbl.columns]
+    raw_tbl.columns = cols
+
+    # Find decile block columns (works with "Lo 10", "2-Dec", ..., "9-Dec", "Hi 10")
+    wanted = []
+    # exact labels commonly used by French
+    decile_labels = ["Lo 10"] + [f"{i}-Dec" for i in range(2, 10)] + ["Hi 10"]
+    for lab in decile_labels:
+        # find first column that contains this label as substring (be tolerant to spaces)
+        match = next((c for c in cols if re.search(rf"\b{re.escape(lab)}\b", c, flags=re.IGNORECASE)), None)
+        if match is None:
+            raise RuntimeError(f"Couldn't find decile column '{lab}' in headers: {cols[:15]} ...")
+        wanted.append(match)
+
+    # Keep only the date + these 10 decile columns
+    date_col = raw_tbl.columns[0]
+    keep_cols = [date_col] + wanted
+    df = raw_tbl[keep_cols].copy()
+
+    # Convert to PeriodIndex monthly, numeric columns
+    df[date_col] = pd.PeriodIndex(df[date_col].astype(str), freq="M")
+    df = df.set_index(date_col)
+    for c in wanted:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Rename to ME1..ME10 (ME1 = Lo 10, ME10 = Hi 10)
+    rename_map = {wanted[0]: "ME1"}
+    for i, c in enumerate(wanted[1:-1], start=2):  # 2-Dec .. 9-Dec -> ME2..ME9
+        rename_map[c] = f"ME{i}"
+    rename_map[wanted[-1]] = "ME10"
+    df = df.rename(columns=rename_map)
+
+    # Replace French missing flag -99.99 with NaN, then drop rows where all ME* are NaN
+    for c in df.columns:
+        df[c] = df[c].replace(-99.99, pd.NA)
+    df = df.dropna(how="all")
 
     # Save
     (DATA_RAW / "Portfolios_Formed_on_ME_raw.csv").write_text(csv_text, encoding="latin1")
-    dfm.to_csv(DATA_PROCESSED / "ff_size_deciles_monthly.csv")
-    return dfm
+    df.to_csv(DATA_PROCESSED / "ff_size_deciles_monthly.csv")
+    return df
+
 
 def download_ff3() -> pd.DataFrame:
     z = _download_zip(URL_FF3)
