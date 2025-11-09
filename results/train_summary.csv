@@ -1,0 +1,11 @@
+decile,preds_path,report_path,oos_r2,oos_mae,oos_rmse,last_oos_month
+ME1,results/oos_preds\ME1_oos_preds.csv,results/reports\ME1_report.txt,-0.05855078523540347,0.04587274720500023,0.06208218087572999,2025-08
+ME10,results/oos_preds\ME10_oos_preds.csv,results/reports\ME10_report.txt,-0.04848029965321454,0.03213221650848408,0.04236266759133831,2025-08
+ME2,results/oos_preds\ME2_oos_preds.csv,results/reports\ME2_report.txt,-0.04815890058418626,0.04641251452253255,0.06185305319076182,2025-08
+ME3,results/oos_preds\ME3_oos_preds.csv,results/reports\ME3_report.txt,-0.07357663058540376,0.04544153940116961,0.05970664652955769,2025-08
+ME4,results/oos_preds\ME4_oos_preds.csv,results/reports\ME4_report.txt,-0.08334776787127862,0.044037385285446595,0.05803996012807745,2025-08
+ME5,results/oos_preds\ME5_oos_preds.csv,results/reports\ME5_report.txt,-0.055612830818419834,0.041930622042594116,0.05526461923223627,2025-08
+ME6,results/oos_preds\ME6_oos_preds.csv,results/reports\ME6_report.txt,-0.09484740401762481,0.040835700870981644,0.053240030994095584,2025-08
+ME7,results/oos_preds\ME7_oos_preds.csv,results/reports\ME7_report.txt,-0.06323943419892997,0.03900561850558423,0.051462063762176394,2025-08
+ME8,results/oos_preds\ME8_oos_preds.csv,results/reports\ME8_report.txt,-0.06839455810615402,0.03808495983973031,0.04956534447605443,2025-08
+ME9,results/oos_preds\ME9_oos_preds.csv,results/reports\ME9_report.txt,-0.06206540063408261,0.0350229459971221,0.04590009301584716,2025-08

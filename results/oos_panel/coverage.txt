@@ -1,0 +1,4 @@
+Months: 937
+Deciles: 10
+Start: 1947-08
+End:   2025-08

@@ -1,0 +1,20 @@
+{
+  "method": "proportional_to_positive_preds + capped-simplex projection",
+  "cap": 0.3,
+  "inputs": {
+    "preds_panel": "results\\oos_panel\\preds_panel.csv"
+  },
+  "deciles": [
+    "ME1",
+    "ME2",
+    "ME3",
+    "ME4",
+    "ME5",
+    "ME6",
+    "ME7",
+    "ME8",
+    "ME9",
+    "ME10"
+  ],
+  "notes": "Months with all non-positive preds \u2192 equal-weight: 27"
+}
