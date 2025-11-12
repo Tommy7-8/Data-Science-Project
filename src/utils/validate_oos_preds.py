@@ -29,7 +29,13 @@ def main():
 
         rows.append({"decile": name, "first_month": first_m, "last_month": last_m, "rows": n})
 
-    summary = pd.DataFrame(rows).sort_values("decile")
+    summary = (
+        pd.DataFrame(rows)
+        .assign(dec_num=lambda d: d["decile"].str.extract(r"ME(\d+)").astype(int))
+        .sort_values("dec_num")
+        .drop(columns="dec_num")
+    )
+
     print("\nPer-decile OOS coverage:")
     print(summary.to_string(index=False))
 

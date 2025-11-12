@@ -1,6 +1,6 @@
 {
   "method": "proportional_to_positive_preds + capped-simplex projection",
-  "cap": 0.3,
+  "cap": 0.4,
   "inputs": {
     "preds_panel": "results\\oos_panel\\preds_panel.csv"
   },

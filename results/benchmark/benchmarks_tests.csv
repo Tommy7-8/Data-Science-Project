@@ -1,0 +1,6 @@
+﻿            comparison; DM_stat; p_value
+ Baseline_net vs EW_10;2.690409;0.007136
+   Baseline_net vs ME1;0.380619;0.703486
+  Baseline_net vs ME10;1.862987;0.062464
+   Baseline_net vs SMB;7.332159;0.000000
+Baseline_net vs Market;2.140759;0.032294

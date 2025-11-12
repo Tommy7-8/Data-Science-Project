@@ -1,6 +1,7 @@
 # src/utils/prepare_features_full.py
 import os
 import argparse
+from pathlib import Path
 import pandas as pd
 
 def to_year_month(s):
@@ -13,45 +14,82 @@ def make_lags(series: pd.Series, max_lag: int):
     return pd.DataFrame(out)
 
 def realized_vol(series: pd.Series, window: int):
-    # population std of monthly returns
     return series.rolling(window=window, min_periods=window).std(ddof=0)
 
+# ---------- robust loader for aligned CSV (handles ; + padded cells) ----------
+def load_processed_csv(path: str) -> pd.DataFrame:
+    with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
+        head = f.readline()
+
+    if ";" in head:
+        df = pd.read_csv(path, sep=";", engine="python", dtype=str, encoding="utf-8-sig")
+        df.columns = [c.strip().lstrip("\ufeff") for c in df.columns]
+        df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+        # convert numeric columns (supports either comma or dot decimals)
+        for c in df.columns:
+            if c != "date":
+                s = df[c].replace("", pd.NA).str.replace(",", ".", regex=False)
+                df[c] = pd.to_numeric(s, errors="coerce")
+        return df
+    else:
+        return pd.read_csv(path, encoding="utf-8-sig")
+
+# ---------- pretty CSV writer (semicolon, dot decimals, aligned columns) ----------
+def fmt_num(val, decimals=6):
+    if pd.isna(val):
+        return ""
+    return f"{val:.{decimals}f}"  # dot decimals
+
+def write_aligned_csv(df: pd.DataFrame, path: str, decimals: int = 6):
+    df_txt = df.copy()
+    for c in df_txt.columns:
+        if c != "date":
+            df_txt[c] = df_txt[c].map(lambda v: fmt_num(v, decimals))
+
+    widths = {c: max(len(c), df_txt[c].astype(str).map(len).max()) for c in df_txt.columns}
+
+    header_cells = [f"{'date':<{widths['date']}}"] + [
+        f"{c:>{widths[c]}}" for c in df_txt.columns if c != "date"
+    ]
+
+    lines = [";".join(header_cells)]
+    for _, row in df_txt.iterrows():
+        left = f"{str(row['date']):<{widths['date']}}"
+        nums = [f"{str(row[c]):>{widths[c]}}" for c in df_txt.columns if c != "date"]
+        lines.append(";".join([left] + nums))
+
+    Path(path).write_text("\n".join(lines), encoding="utf-8-sig")
+
 def build_features_for_decile(df: pd.DataFrame, decile: str) -> pd.DataFrame:
-    # Keep date-like month and series we may need for checks
     out = df[["month", decile, "Mkt-RF", "SMB", "HML", "RF"]].copy()
-
-    # Lags of the decile return
     out = pd.concat([out, make_lags(out[decile], 12)], axis=1)
-
-    # Rolling realized vol of the decile
     out[f"{decile}_vol_3m"]  = realized_vol(out[decile], 3)
     out[f"{decile}_vol_6m"]  = realized_vol(out[decile], 6)
     out[f"{decile}_vol_12m"] = realized_vol(out[decile], 12)
-
-    # Lagged common factors (only lagged are used in the model)
     out["Mkt-RF_lag1"] = out["Mkt-RF"].shift(1)
     out["SMB_lag1"]    = out["SMB"].shift(1)
-
-    # Drop rows until all key lags/vols exist
     need = [f"{decile}_lag12", f"{decile}_vol_12m", "Mkt-RF_lag1", "SMB_lag1"]
     first_idx = out[need].dropna().index.min()
     out = out.loc[first_idx:].reset_index(drop=True)
-
-    # month -> date (YYYY-MM)
     out = out.rename(columns={"month": "date"})
     return out
 
 def main(args):
-    p = args.input  # processed combined CSV (you said this lives in data/processed)
-    df = pd.read_csv(p)
-    if "date" not in df.columns:
-        raise ValueError("Expected a 'date' column in the CSV.")
+    p = args.input
+    df = load_processed_csv(p)
 
-    # Normalize to YYYY-MM and sort
-    df["month"] = to_year_month(df["date"])
+    if "date" in df.columns:
+        df["month"] = to_year_month(df["date"])
+    else:
+        first_col = df.columns[0]
+        if df[first_col].astype(str).str.match(r"\d{4}-\d{2}$").all():
+            df = df.rename(columns={first_col: "date"})
+            df["month"] = to_year_month(df["date"])
+        else:
+            raise ValueError("Expected a 'date' column in the CSV.")
+
     df = df.sort_values("month").drop_duplicates(subset=["month"], keep="last").reset_index(drop=True)
 
-    # Column checks
     needed = ["Mkt-RF", "SMB", "HML", "RF"] + [f"ME{i}" for i in range(1, 11)]
     missing = [c for c in needed if c not in df.columns]
     if missing:
@@ -59,12 +97,11 @@ def main(args):
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    # Build and write features per decile
     for j in range(1, 11):
         dec = f"ME{j}"
         feat = build_features_for_decile(df, dec)
         out_path = os.path.join(args.outdir, f"features_{dec}_full.csv")
-        feat.to_csv(out_path, index=False)
+        write_aligned_csv(feat, out_path, decimals=6)
         print(f"Wrote {out_path}  ({feat['date'].iloc[0]} → {feat['date'].iloc[-1]})")
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ file: data/processed\features_ME10_full.csv
 date_range: 1927-07 → 2025-07
 initial_train_months: 240 (through 1947-06)
 oos_months: 937 (through 2025-08)
-oos_r2: -0.04848029965321454
-oos_mae: 0.03213221650848408
-oos_rmse: 0.04236266759133831
+oos_r2: -0.04848049155861878
+oos_mae: 0.032132219129836964
+oos_rmse: 0.04236267146819918
 last_alpha: 10.0
