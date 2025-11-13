@@ -1,17 +1,32 @@
 # src/alloc/run_allocation.py
-# Baseline allocator — proportional-to-positive preds + capped-simplex projection.
-# Reads aligned semicolon CSVs; writes aligned semicolon CSVs.
+# Final allocator — mean-variance with shrinkage covariance + weight caps.
+# Uses:
+#   - predicted returns   : results/oos_panel/preds_panel.csv
+#   - predicted volatility: results/oos_vol_panel/preds_vol_panel.csv (squared returns)
+#   - realized returns    : results/oos_panel/true_panel.csv
+# Writes aligned semicolon CSVs.
 
 import os, json
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
-REL_PREDS     = Path("results/oos_panel/preds_panel.csv")
-REL_OUT_DIR   = Path("results/alloc")
-REL_OUT_CSV   = REL_OUT_DIR / "weights_baseline.csv"
-REL_OUT_META  = REL_OUT_DIR / "weights_baseline_meta.json"
-WEIGHT_CAP    = 0.40  # per-asset cap (feasible for 10 names because 10 * 0.40 >= 1)
+# ---------- paths & hyperparameters ----------
+REL_PREDS_RET  = Path("results/oos_panel/preds_panel.csv")
+REL_PREDS_VOL  = Path("results/oos_vol_panel/preds_vol_panel.csv")
+REL_TRUE_RET   = Path("results/oos_panel/true_panel.csv")
+
+REL_OUT_DIR    = Path("results/alloc")
+REL_OUT_CSV    = REL_OUT_DIR / "weights_baseline.csv"        # same filename as before
+REL_OUT_META   = REL_OUT_DIR / "weights_baseline_meta.json"  # same filename as before
+
+WEIGHT_CAP     = 0.40   # per-asset cap (10 * 0.40 >= 1 -> feasible)
+COV_WINDOW     = 120    # lookback window in months for covariance
+MIN_COV_OBS    = 24     # minimum months to estimate covariance
+SHRINKAGE      = 0.50   # shrinkage intensity toward diagonal
+VOL_BLEND      = 0.50   # how much to blend predicted diag into covariance diag
+EPS_VAR        = 1e-6   # floor for variances
+
 
 # ---------- pretty CSV writer (semicolon, dot decimals, aligned columns) ----------
 def _fmt_num(val, decimals=6):
@@ -56,41 +71,36 @@ def write_aligned_csv(df: pd.DataFrame, path: Path, decimals: int = 6, sep: str 
 
     Path(path).write_text("\n".join(lines), encoding="utf-8-sig")
 
-# ---------- robust loader for aligned semicolon preds_panel.csv ----------
-def load_preds_panel(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing predictions file: {path}")
 
-    # Read with semicolon; strip header and cell whitespace; handle BOM
+# ---------- generic loader for ME1..ME10 semicolon panels ----------
+def load_me_panel(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing file: {path}")
+
     with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
         head = f.readline()
 
     if ";" in head:
         df = pd.read_csv(path, sep=";", dtype=str, encoding="utf-8-sig", engine="python")
-        # normalize headers and cells
         df.columns = [c.strip().lstrip("\ufeff") for c in df.columns]
         obj_cols = df.select_dtypes(include="object").columns
         df[obj_cols] = df[obj_cols].apply(lambda s: s.str.strip())
     else:
-        # fallback for plain CSV
         df = pd.read_csv(path, dtype=str, encoding="utf-8-sig")
 
-    # require month column (after stripping)
     if "month" not in df.columns:
-        raise ValueError("preds_panel.csv must have a 'month' column")
+        raise ValueError(f"{path} must have a 'month' column")
 
-    # order decile columns ME1..ME10 and convert to floats
     deciles = [c for c in df.columns if c.startswith("ME")]
-    # enforce numeric order
     ordered = [f"ME{i}" for i in range(1, 11) if f"ME{i}" in deciles]
     if len(ordered) != 10:
-        raise ValueError(f"Expected 10 ME columns, found: {sorted(deciles)}")
+        raise ValueError(f"Expected 10 ME columns in {path}, found: {sorted(deciles)}")
 
-    # convert numeric cells
     for c in ordered:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df[["month"] + ordered].copy()
+
 
 # ---------- projection onto capped simplex (long-only, sum=1, w_i <= cap) ----------
 def project_capped_simplex(w0: np.ndarray, cap: float) -> np.ndarray:
@@ -138,49 +148,136 @@ def project_capped_simplex(w0: np.ndarray, cap: float) -> np.ndarray:
         fixed[over] = True
         w[over] = 0.0  # will be set to cap next loop
 
+
+# ---------- covariance builder with shrinkage + predicted diag ----------
+def build_covariance(hist_rets: np.ndarray, pred_var: np.ndarray) -> np.ndarray:
+    n = pred_var.size
+
+    # if not enough history, fall back to diagonal from predicted variance
+    if hist_rets.shape[0] < MIN_COV_OBS:
+        diag = np.maximum(pred_var, EPS_VAR)
+        return np.diag(diag)
+
+    # sample covariance
+    S = np.cov(hist_rets, rowvar=False, ddof=1)
+    if S.shape != (n, n):
+        S = np.atleast_2d(S)
+        if S.shape != (n, n):
+            diag = np.maximum(pred_var, EPS_VAR)
+            return np.diag(diag)
+
+    # shrink toward diagonal
+    diagS = np.diag(np.diag(S))
+    Sigma = (1.0 - SHRINKAGE) * S + SHRINKAGE * diagS
+
+    # blend predicted variance into diagonal
+    diagSigma = np.diag(Sigma)
+    blended_diag = VOL_BLEND * diagSigma + (1.0 - VOL_BLEND) * np.maximum(pred_var, EPS_VAR)
+    Sigma[np.diag_indices_from(Sigma)] = blended_diag
+
+    # small diagonal bump for numerical stability
+    Sigma[np.diag_indices_from(Sigma)] += EPS_VAR
+
+    return Sigma
+
+
+# ---------- simple mean-variance weight from mu and Sigma ----------
+def mean_variance_weights(mu: np.ndarray, Sigma: np.ndarray, cap: float) -> np.ndarray:
+    n = mu.size
+    if np.allclose(mu, 0) or np.isnan(mu).any():
+        return np.full(n, 1.0 / n)
+
+    # unconstrained direction: Sigma^{-1} mu
+    try:
+        w_dir = np.linalg.solve(Sigma, mu)
+    except np.linalg.LinAlgError:
+        # fall back: risk-adjusted mu using diagonal only
+        diag = np.diag(Sigma)
+        inv_vol = 1.0 / np.sqrt(np.maximum(diag, EPS_VAR))
+        w_dir = mu * inv_vol
+
+    if np.allclose(w_dir, 0) or np.isnan(w_dir).any():
+        return np.full(n, 1.0 / n)
+
+    # enforce long-only + caps via projection
+    w_dir = np.clip(w_dir, 0.0, None)
+    w = project_capped_simplex(w_dir, cap)
+    return w
+
+
+# ---------- project root detection ----------
 def detect_project_root() -> Path:
     cwd = Path.cwd()
-    if (cwd / REL_PREDS).exists():
+    if (cwd / REL_PREDS_RET).exists():
         return cwd
     here = Path(__file__).resolve().parent
     for p in [here, *here.parents]:
-        if (p / REL_PREDS).exists():
+        if (p / REL_PREDS_RET).exists():
             return p
     return cwd
 
+
+# ---------- main ----------
 def main():
-    root      = detect_project_root()
-    preds_p   = root / REL_PREDS
-    out_dir   = root / REL_OUT_DIR
-    out_csv   = root / REL_OUT_CSV
-    out_meta  = root / REL_OUT_META
+    root       = detect_project_root()
+    preds_ret_p = root / REL_PREDS_RET
+    preds_vol_p = root / REL_PREDS_VOL
+    true_ret_p  = root / REL_TRUE_RET
+    out_dir    = root / REL_OUT_DIR
+    out_csv    = root / REL_OUT_CSV
+    out_meta   = root / REL_OUT_META
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    preds = load_preds_panel(preds_p)  # robust read + clean + ME1..ME10 order
-    deciles = [c for c in preds.columns if c.startswith("ME")]  # already ordered
+    # load panels
+    preds_ret = load_me_panel(preds_ret_p)   # predicted returns
+    preds_vol = load_me_panel(preds_vol_p)   # predicted "vol" (squared returns)
+    true_ret  = load_me_panel(true_ret_p)    # realized returns
+
+    # rename columns to keep them separate
+    deciles = [f"ME{i}" for i in range(1, 11)]
+    preds_ret = preds_ret.rename(columns={d: f"{d}_ret" for d in deciles})
+    preds_vol = preds_vol.rename(columns={d: f"{d}_vol" for d in deciles})
+    true_ret  = true_ret.rename(columns={d: f"{d}_true" for d in deciles})
+
+    # align all by month
+    df = preds_ret.merge(preds_vol, on="month", how="inner").merge(true_ret, on="month", how="inner")
+    df = df.sort_values("month").reset_index(drop=True)
+
+    n_months = df.shape[0]
+    if n_months == 0:
+        raise ValueError("No overlapping months between preds_ret, preds_vol, and true_ret panels.")
 
     rows = []
-    months_all_nonpos = 0
-    for _, r in preds.iterrows():
-        mu = r[deciles].astype(float).values  # predicted returns
-        pos = np.maximum(mu, 0.0)             # zero-out negatives
-        if pos.sum() == 0:
-            base = np.full_like(pos, 1.0 / len(pos))  # equal-weight if all <= 0
-            months_all_nonpos += 1
-        else:
-            base = pos / pos.sum()
+    for idx in range(n_months):
+        month = df.loc[idx, "month"]
 
-        w = project_capped_simplex(base, WEIGHT_CAP)
-        rows.append({"month": r["month"], **{d: w[i] for i, d in enumerate(deciles)}})
+        # predicted mean returns and predicted variance (from vol model)
+        mu = np.array([df.loc[idx, f"{d}_ret"] for d in deciles], dtype=float)
+        pred_var = np.array([df.loc[idx, f"{d}_vol"] for d in deciles], dtype=float)
+        pred_var = np.maximum(pred_var, EPS_VAR)
+
+        # build historical window for covariance using realized returns up to t-1
+        start_idx = max(0, idx - COV_WINDOW)
+        hist_slice = df.iloc[start_idx:idx]    # up to but not including idx
+        if hist_slice.shape[0] > 0:
+            hist_rets = np.column_stack([hist_slice[f"{d}_true"].values for d in deciles])
+        else:
+            hist_rets = np.empty((0, len(deciles)))
+
+        Sigma = build_covariance(hist_rets, pred_var)
+        w = mean_variance_weights(mu, Sigma, WEIGHT_CAP)
+
+        rows.append({"month": month, **{d: float(w[i]) for i, d in enumerate(deciles)}})
 
     W = pd.DataFrame(rows, columns=["month"] + deciles)
 
-    # Sanity: row sums ~ 1
+    # sanity: row sums ~ 1 and no NaNs
     if W[deciles].isna().any().any():
         raise AssertionError("NaNs detected in weights.")
     sums = W[deciles].sum(axis=1).to_numpy()
-    if not np.allclose(sums, 1.0, atol=1e-12):
+    if not np.allclose(sums, 1.0, atol=1e-9):
+        # final renormalization if needed
         W[deciles] = W[deciles].div(W[deciles].sum(axis=1), axis=0)
         sums = W[deciles].sum(axis=1).to_numpy()
         if not np.allclose(sums, 1.0, atol=1e-9):
@@ -190,16 +287,29 @@ def main():
     write_aligned_csv(W, out_csv, decimals=6, sep=";")
     with open(out_meta, "w", encoding="utf-8") as f:
         json.dump({
-            "method": "proportional_to_positive_preds + capped-simplex projection",
+            "method": "mean-variance with shrinkage covariance + weight cap",
             "cap": WEIGHT_CAP,
-            "inputs": {"preds_panel": str(preds_p.relative_to(root))},
+            "inputs": {
+                "preds_ret_panel": str(preds_ret_p.relative_to(root)),
+                "preds_vol_panel": str(preds_vol_p.relative_to(root)),
+                "true_ret_panel":  str(true_ret_p.relative_to(root))
+            },
             "deciles": deciles,
-            "notes": f"Months with all non-positive preds → equal-weight: {months_all_nonpos}"
+            "cov_window_months": COV_WINDOW,
+            "min_cov_obs": MIN_COV_OBS,
+            "shrinkage_to_diag": SHRINKAGE,
+            "vol_blend": VOL_BLEND,
+            "notes": (
+                "preds_vol_panel used as forecast of squared returns (risk proxy); "
+                "covariance from past realized returns with diagonal shrinkage; "
+                "unconstrained direction Σ^{-1}μ projected onto capped simplex."
+            )
         }, f, indent=2)
 
-    print(f"Saved weights → {out_csv}")
-    print(f"Saved meta    → {out_meta}")
-    print(f"Months with all non-positive preds: {months_all_nonpos}")
+    print(f"Saved weights (mean-variance) → {out_csv}")
+    print(f"Saved meta                     → {out_meta}")
+    print(f"Months in allocation panel     : {n_months}")
+
 
 if __name__ == "__main__":
     main()

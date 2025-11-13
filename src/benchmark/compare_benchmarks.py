@@ -3,7 +3,6 @@
 #  - EW_10 (equal-weight)
 #  - SMB (official Fama–French)
 #  - Market (optional)
-#  - ME1 and ME10 (smallest and largest deciles)
 # Outputs aligned semicolon CSVs + JSON summary and DM tests.
 # Uses annualized Sharpe with 95% CI and HAC/Newey–West DM tests.
 
@@ -24,7 +23,8 @@ TESTS_OUT   = OUT_DIR / "benchmarks_tests.csv"
 META_OUT    = OUT_DIR / "benchmarks_meta.json"
 
 def _fmt_num(val, decimals=6):
-    if pd.isna(val): return ""
+    if pd.isna(val): 
+        return ""
     return f"{float(val):.{decimals}f}"
 
 def write_aligned_csv(df: pd.DataFrame, path: Path, decimals=6):
@@ -48,7 +48,8 @@ def max_drawdown(r):
 
 def sharpe_ci_annualized(r, n_boot=2000, ci=0.95):
     r = r.dropna().to_numpy()
-    if len(r) < 3: return np.nan, np.nan
+    if len(r) < 3: 
+        return np.nan, np.nan
     rng = np.random.default_rng(7)
     boot = []
     for _ in range(n_boot):
@@ -87,7 +88,8 @@ def diebold_mariano_test(x, y):
     x, y = x.loc[common], y.loc[common]
     d = (x - y).to_numpy()
     T = len(d)
-    if T < 10: return np.nan, np.nan
+    if T < 10: 
+        return np.nan, np.nan
     var_mean = hac_var(d, int(T**(1/3)))
     dm = d.mean() / np.sqrt(var_mean)
     p = 2*(1 - stats.norm.cdf(abs(dm)))
@@ -111,15 +113,16 @@ def main():
     for c in deciles:
         true_[c] = pd.to_numeric(true_[c], errors="coerce")
 
+    # Equal-weight of all 10 ME deciles
     true_["EW_10"] = true_[deciles].mean(axis=1)
-    # Keep ME1 and ME10 as separate benchmarks
-    true_keep = ["month", "EW_10", "ME1", "ME10"]
+    true_keep = ["month", "EW_10"]
 
     date_col = "date" if "date" in proc.columns else "month"
     proc["month"] = pd.to_datetime(proc[date_col]).dt.to_period("M").astype(str)
     proc["SMB"] = pd.to_numeric(proc["SMB"], errors="coerce")
     if "Mkt-RF" in proc.columns and "RF" in proc.columns:
-        proc["Mkt-RF"], proc["RF"] = pd.to_numeric(proc["Mkt-RF"], errors="coerce"), pd.to_numeric(proc["RF"], errors="coerce")
+        proc["Mkt-RF"] = pd.to_numeric(proc["Mkt-RF"], errors="coerce")
+        proc["RF"]     = pd.to_numeric(proc["RF"], errors="coerce")
         proc["Market"] = proc["Mkt-RF"] + proc["RF"]
 
     # Merge all series
@@ -130,14 +133,14 @@ def main():
         panel = panel.merge(proc[["month", "Market"]], on="month", how="left")
 
     # Metrics
-    series_cols = ["net_ret", "EW_10", "ME1", "ME10", "SMB"] + (["Market"] if "Market" in panel.columns else [])
+    series_cols = ["net_ret", "EW_10", "SMB"] + (["Market"] if "Market" in panel.columns else [])
     rows = [dict(series=s, **series_metrics(panel[s])) for s in series_cols]
     summary = pd.DataFrame(rows)
 
     # DM tests vs Baseline
     base = panel["net_ret"]
     comps = []
-    for c in [x for x in ["EW_10","ME1","ME10","SMB","Market"] if x in panel.columns]:
+    for c in [x for x in ["EW_10", "SMB", "Market"] if x in panel.columns]:
         DM, p = diebold_mariano_test(base, panel[c])
         comps.append(dict(comparison=f"Baseline_net vs {c}", DM_stat=DM, p_value=p))
     tests = pd.DataFrame(comps)
@@ -146,12 +149,17 @@ def main():
     write_aligned_csv(panel, PANEL_OUT)
     write_aligned_csv(summary, SUMM_OUT)
     write_aligned_csv(tests, TESTS_OUT)
-    json.dump(dict(notes="Added ME1 and ME10 as extra benchmarks; official SMB; annualized Sharpe 95% CI; DM HAC/Newey-West."),
-              open(META_OUT,"w",encoding="utf-8"), indent=2)
+    json.dump(
+        dict(
+            notes="Benchmarks: EW_10, official SMB, optional Market; annualized Sharpe 95% CI; DM HAC/Newey-West."
+        ),
+        open(META_OUT, "w", encoding="utf-8"),
+        indent=2
+    )
 
     print(f"Saved results → {OUT_DIR}")
     print("\nAnnualized Sharpe (95% CI):")
-    for _,r in summary.iterrows():
+    for _, r in summary.iterrows():
         print(f" {r['series']:>10s} | Sharpe {r['sharpe']:.3f} (CI [{r['sharpe_low']:.3f},{r['sharpe_high']:.3f}])")
 
 if __name__ == "__main__":

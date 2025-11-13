@@ -1,8 +1,10 @@
 {
-  "method": "proportional_to_positive_preds + capped-simplex projection",
+  "method": "mean-variance with shrinkage covariance + weight cap",
   "cap": 0.4,
   "inputs": {
-    "preds_panel": "results\\oos_panel\\preds_panel.csv"
+    "preds_ret_panel": "results\\oos_panel\\preds_panel.csv",
+    "preds_vol_panel": "results\\oos_vol_panel\\preds_vol_panel.csv",
+    "true_ret_panel": "results\\oos_panel\\true_panel.csv"
   },
   "deciles": [
     "ME1",
@@ -16,5 +18,9 @@
     "ME9",
     "ME10"
   ],
-  "notes": "Months with all non-positive preds \u2192 equal-weight: 27"
+  "cov_window_months": 120,
+  "min_cov_obs": 24,
+  "shrinkage_to_diag": 0.5,
+  "vol_blend": 0.5,
+  "notes": "preds_vol_panel used as forecast of squared returns (risk proxy); covariance from past realized returns with diagonal shrinkage; unconstrained direction \u03a3^{-1}\u03bc projected onto capped simplex."
 }
