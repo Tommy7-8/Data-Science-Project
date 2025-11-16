@@ -9,8 +9,7 @@ return and volatility forecasts. Evaluation follows a strict walk-forward setup:
 predict one month ahead, rebalance monthly. All transformations are refit inside the training
 window. Transaction costs and turnover limits are included for realism.
 Weights are computed by a long-only, fully invested optimizer. The primary implementation is
-mean-variance with shrinkage covariance and weight caps; I also report a simple volatility-aware
-allocation as a robustness check. Out-of-sample performance is compared with SMB, an equalweight mix of deciles, and the market, using annualized return, volatility, Sharpe and Sortino
+mean-variance with shrinkage covariance and weight caps. Out-of-sample performance is compared with SMB, an equalweight mix of deciles, and the market, using annualized return, volatility, Sharpe and Sortino
 ratios, maximum drawdown, turnover, and rolling stability plots. The question is practical: do
 machine-learning forecasts of return and risk on size-sorted portfolios improve outcomes relative
 to standard size benchmarks?

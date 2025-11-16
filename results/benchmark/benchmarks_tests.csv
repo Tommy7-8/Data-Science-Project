@@ -1,4 +1,6 @@
-﻿            comparison; DM_stat; p_value
- Baseline_net vs EW_10;0.817996;0.413360
-   Baseline_net vs SMB;7.171671;0.000000
-Baseline_net vs Market;1.543162;0.122792
+﻿      comparison;  DM_stat; p_value
+ LR_net vs EW_10; 0.817996;0.413360
+LR_net vs Market; 1.543162;0.122792
+ GB_net vs EW_10; 0.505533;0.613185
+GB_net vs Market; 1.386320;0.165649
+GB_net vs LR_net;-0.275001;0.783315

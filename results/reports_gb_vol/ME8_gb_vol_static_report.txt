@@ -1,0 +1,10 @@
+decile: ME8
+file: data/processed\features_ME8_full.csv
+date_range: 1927-07 → 2025-07
+initial_train_months: 240 (through 1947-06)
+mode: static
+vol_target_col: ME8_vol_3m
+oos_months: 937 (through 2025-08)
+oos_r2: 0.21973211288504324
+oos_mae: 0.013907882578725826
+oos_rmse: 0.018287354163625834

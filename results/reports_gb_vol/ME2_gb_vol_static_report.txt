@@ -1,0 +1,10 @@
+decile: ME2
+file: data/processed\features_ME2_full.csv
+date_range: 1927-07 → 2025-07
+initial_train_months: 240 (through 1947-06)
+mode: static
+vol_target_col: ME2_vol_3m
+oos_months: 937 (through 2025-08)
+oos_r2: 0.02941084066571864
+oos_mae: 0.020009006540884697
+oos_rmse: 0.026103547024598557

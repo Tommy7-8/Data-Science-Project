@@ -1,0 +1,10 @@
+decile: ME9
+file: data/processed\features_ME9_full.csv
+date_range: 1927-07 → 2025-07
+initial_train_months: 240 (through 1947-06)
+mode: static
+vol_target_col: ME9_vol_3m
+oos_months: 937 (through 2025-08)
+oos_r2: 0.07611590476875207
+oos_mae: 0.01442649455161844
+oos_rmse: 0.018469844366599215
