@@ -1,19 +1,23 @@
 # src/models/train_all_gb.py
 # Train Gradient Boosting per decile and produce WALK-FORWARD *return* predictions
 # (fast version: one GBM per decile, no per-step GridSearchCV)
+#
+# Outputs (per decile, GB returns):
+#   - results/oos_preds_gb/MEj_oos_preds_gb.csv   (aligned ; CSV: month, y_true, y_pred)
+#   - results/reports_gb/MEj_gb_<mode>_report.txt
 
 import os
 import re
 import glob
 import argparse
 from typing import List, Dict, Any
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
-import joblib
 
 
 # ----------------------------- Helpers -----------------------------
@@ -73,6 +77,57 @@ def load_feature_csv(path: str) -> pd.DataFrame:
         return pd.read_csv(path, encoding="utf-8-sig")
 
 
+# ---------- aligned CSV writer for GB OOS predictions ----------
+
+def fmt_num(val, max_decimals: int = 6, dec_char: str = ".") -> str:
+    """Format numbers without unnecessary trailing zeros."""
+    if pd.isna(val):
+        return ""
+    s = f"{float(val):.{max_decimals}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    if dec_char != ".":
+        s = s.replace(".", dec_char)
+    return s
+
+
+def write_aligned_oos_csv(df: pd.DataFrame, path: str, max_decimals: int = 6, sep: str = ";"):
+    """
+    Writes semicolon-separated, visually aligned CSV for OOS GB predictions.
+    Assumes first column is 'month' and others are numeric.
+    """
+    df_txt = df.copy()
+    # format numeric columns (except 'month')
+    for c in df_txt.columns:
+        if c != "month":
+            df_txt[c] = df_txt[c].map(lambda v: fmt_num(v, max_decimals))
+
+    # compute widths
+    df_txt = df_txt.astype(str)
+    widths = {c: max(len(c), df_txt[c].map(len).max()) for c in df_txt.columns}
+
+    # header: month left-aligned, others right-aligned
+    header_cells = []
+    for c in df_txt.columns:
+        if c == "month":
+            header_cells.append(f"{c:<{widths[c]}}")
+        else:
+            header_cells.append(f"{c:>{widths[c]}}")
+
+    lines = [sep.join(header_cells)]
+    for _, row in df_txt.iterrows():
+        cells = []
+        for c in df_txt.columns:
+            val = row[c]
+            if c == "month":
+                cells.append(f"{val:<{widths[c]}}")
+            else:
+                cells.append(f"{val:>{widths[c]}}")
+        lines.append(sep.join(cells))
+
+    Path(path).write_text("\n".join(lines), encoding="utf-8-sig")
+
+
 # ------------------------ GBM training & prediction ------------------------
 
 
@@ -106,6 +161,7 @@ def walkforward_predictions(
     """
     n = len(y)
     preds, truths, pred_months = [], [], []
+    model = None
 
     if mode == "static":
         # Fit once on initial window
@@ -120,7 +176,6 @@ def walkforward_predictions(
 
     elif mode == "walkforward":
         # Refit each month with fixed hyperparams (no grid search)
-        model = None
         for t in range(init_train_n, n):
             model = make_gbm()
             model.fit(X[:t], y[:t])
@@ -172,7 +227,6 @@ def _infer_decile_from_filename(base: str) -> str:
 
 def train_one_file_gb(
     csv_path: str,
-    out_models: str,
     out_preds: str,
     out_reports: str,
     prefer_train_months: int = 240,
@@ -230,27 +284,15 @@ def train_one_file_gb(
     r2_str = "n/a" if wf["r2"] is None else f"{wf['r2']:.4f}"
     print(f"OOS R² (return): {r2_str} | MAE: {wf['mae']:.6f} | RMSE: {wf['rmse']:.6f}")
 
-    # --- Save predictions ---
+    # --- Save predictions (aligned ; CSV) ---
     os.makedirs(out_preds, exist_ok=True)
-    preds_path = os.path.join(out_preds, f"{decile}_gb_oos_preds.csv")
-    pd.DataFrame({
+    preds_path = os.path.join(out_preds, f"{decile}_oos_preds_gb.csv")
+    preds_df = pd.DataFrame({
         "month": wf["months"],
         "y_true": wf["y_true"],   # true next-month return
         "y_pred": wf["y_pred"],   # predicted next-month return
-    }).to_csv(preds_path, index=False)
-
-    # --- Save model (last fitted model in chosen mode) ---
-    os.makedirs(out_models, exist_ok=True)
-    model_path = os.path.join(out_models, f"{decile}_gb_{mode}.pkl")
-    joblib.dump(
-        {
-            "model": wf["model"],
-            "feature_cols": feature_cols,
-            "init_train_n": init_train_n,
-            "mode": mode,
-        },
-        model_path,
-    )
+    })
+    write_aligned_oos_csv(preds_df, preds_path, max_decimals=6)
 
     # --- Save report ---
     os.makedirs(out_reports, exist_ok=True)
@@ -268,7 +310,6 @@ def train_one_file_gb(
 
     return {
         "decile": decile,
-        "model_path": model_path,
         "preds_path": preds_path,
         "report_path": report_path,
         "metrics": {"r2": wf["r2"], "mae": wf["mae"], "rmse": wf["rmse"]},
@@ -285,11 +326,6 @@ def main():
         "--glob",
         default="data/processed/features_ME*_full.csv",
         help="Glob pattern for decile feature files.",
-    )
-    parser.add_argument(
-        "--models_dir",
-        default="models_gb",
-        help="Where to save fitted GB models.",
     )
     parser.add_argument(
         "--preds_dir",
@@ -324,27 +360,17 @@ def main():
     for fpath in files:
         print(" -", fpath)
 
-    errors = []
     for fpath in files:
         try:
             _ = train_one_file_gb(
                 csv_path=fpath,
-                out_models=args.models_dir,
                 out_preds=args.preds_dir,
                 out_reports=args.reports_dir,
                 prefer_train_months=args.train_months,
                 mode=args.mode,
             )
         except Exception as e:
-            errors.append((fpath, str(e)))
             print(f"\n[ERROR] {fpath} -> {e}\n")
-
-    if errors:
-        os.makedirs("results", exist_ok=True)
-        with open("results/train_gb_errors.txt", "w", encoding="utf-8") as f:
-            for path, msg in errors:
-                f.write(f"{path}: {msg}\n")
-        print("Some GB files failed. See → results/train_gb_errors.txt")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+{
+  "mean_monthly_return": 0.011157642104051173,
+  "annualized_return": 0.14242164284681746,
+  "annualized_volatility": 0.17528495297432617,
+  "sharpe_ratio": 0.7638516768077922,
+  "max_drawdown": -0.5457313078918443,
+  "avg_turnover": 0.580263341684435,
+  "avg_turnover_after_limit": 0.19922347441364607,
+  "transaction_cost": 0.001,
+  "turnover_limit": 0.2
+}

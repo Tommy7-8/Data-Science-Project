@@ -1,23 +1,26 @@
 # src/models/train_all_gb_vol.py
-# Train Gradient Boosting per decile and produce WALK-FORWARD *volatility* predictions.
+# Train Gradient Boosting per decile and produce WALK-FORWARD *volatility* predictions (GB version).
+#
+# Outputs (per decile, GB VOL):
+#   - results/oos_vol_gb/MEj_oos_vol_preds_gb.csv    (aligned ; CSV: month, y_true, y_pred)
+#   - results/reports_gb_vol/MEj_gb_vol_<mode>_report.txt
 
 import os
 import re
 import glob
 import argparse
 from typing import List, Dict, Any
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
-import joblib
 
-N_LAGS = 12  # adjust if you want more/less lags
+N_LAGS = 12  # kept for reference, not directly used
 
 
 # ----------------------------- Helpers -----------------------------
-
 
 def select_vol_features(df: pd.DataFrame, decile_prefix: str) -> List[str]:
     """
@@ -71,7 +74,6 @@ def first_train_size(n_obs: int, prefer_train_months: int = 240, min_train: int 
 
 # -------- robust loader for aligned feature CSVs (semicolon + padded) --------
 
-
 def load_feature_csv(path: str) -> pd.DataFrame:
     """
     Reads the aligned feature CSVs written by prepare_features_full.py:
@@ -95,8 +97,55 @@ def load_feature_csv(path: str) -> pd.DataFrame:
         return pd.read_csv(path, encoding="utf-8-sig")
 
 
-# ------------------------ GBM training & prediction ------------------------
+# ---------- aligned CSV writer for GB VOL OOS predictions ----------
 
+def fmt_num(val, max_decimals: int = 6, dec_char: str = ".") -> str:
+    """Format numbers without unnecessary trailing zeros."""
+    if pd.isna(val):
+        return ""
+    s = f"{float(val):.{max_decimals}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    if dec_char != ".":
+        s = s.replace(".", dec_char)
+    return s
+
+
+def write_aligned_oos_csv(df: pd.DataFrame, path: str, max_decimals: int = 6, sep: str = ";"):
+    """
+    Writes semicolon-separated, visually aligned CSV for OOS GB VOL predictions.
+    Assumes first column is 'month' and others are numeric.
+    """
+    df_txt = df.copy()
+    for c in df_txt.columns:
+        if c != "month":
+            df_txt[c] = df_txt[c].map(lambda v: fmt_num(v, max_decimals))
+
+    df_txt = df_txt.astype(str)
+    widths = {c: max(len(c), df_txt[c].map(len).max()) for c in df_txt.columns}
+
+    header_cells = []
+    for c in df_txt.columns:
+        if c == "month":
+            header_cells.append(f"{c:<{widths[c]}}")
+        else:
+            header_cells.append(f"{c:>{widths[c]}}")
+
+    lines = [sep.join(header_cells)]
+    for _, row in df_txt.iterrows():
+        cells = []
+        for c in df_txt.columns:
+            val = row[c]
+            if c == "month":
+                cells.append(f"{val:<{widths[c]}}")
+            else:
+                cells.append(f"{val:>{widths[c]}}")
+        lines.append(sep.join(cells))
+
+    Path(path).write_text("\n".join(lines), encoding="utf-8-sig")
+
+
+# ------------------------ GBM training & prediction ------------------------
 
 def make_gbm() -> HistGradientBoostingRegressor:
     """
@@ -133,7 +182,7 @@ def walkforward_predictions(
         model = make_gbm()
         model.fit(X[:init_train_n], y[:init_train_n])
         for t in range(init_train_n, n):
-            y_hat = float(model.predict(X[t : t + 1])[0])
+            y_hat = float(model.predict(X[t:t+1])[0])
             preds.append(y_hat)
             truths.append(float(y[t]))
             pred_months.append(str(months[t]))
@@ -141,7 +190,7 @@ def walkforward_predictions(
         for t in range(init_train_n, n):
             model = make_gbm()
             model.fit(X[:t], y[:t])
-            y_hat = float(model.predict(X[t : t + 1])[0])
+            y_hat = float(model.predict(X[t:t+1])[0])
             preds.append(y_hat)
             truths.append(float(y[t]))
             pred_months.append(str(months[t]))
@@ -168,7 +217,6 @@ def walkforward_predictions(
 
 # ------------------------ Train one decile file ------------------------
 
-
 def _infer_decile_from_filename(base: str) -> str:
     """
     Extract something like 'ME1' from paths such as:
@@ -189,7 +237,6 @@ def _infer_decile_from_filename(base: str) -> str:
 
 def train_one_file_gb_vol(
     csv_path: str,
-    out_models: str,
     out_preds: str,
     out_reports: str,
     prefer_train_months: int = 240,
@@ -247,32 +294,19 @@ def train_one_file_gb_vol(
     print(f"OOS R² (vol): {r2_str} | MAE: {wf['mae']:.6f} | RMSE: {wf['rmse']:.6f}")
     print(f"Vol target column: {vol_target_col}")
 
-    # --- Save predictions ---
+    # --- Save VOL predictions (aligned ; CSV) ---
     os.makedirs(out_preds, exist_ok=True)
-    preds_path = os.path.join(out_preds, f"{decile}_gb_vol_oos_preds.csv")
-    pd.DataFrame(
+    preds_path = os.path.join(out_preds, f"{decile}_oos_vol_preds_gb.csv")
+    preds_df = pd.DataFrame(
         {
             "month": wf["months"],
             "y_true": wf["y_true"],  # true next-month vol
             "y_pred": wf["y_pred"],  # predicted next-month vol
         }
-    ).to_csv(preds_path, index=False)
-
-    # --- Save model ---
-    os.makedirs(out_models, exist_ok=True)
-    model_path = os.path.join(out_models, f"{decile}_gb_vol_{mode}.pkl")
-    joblib.dump(
-        {
-            "model": wf["model"],
-            "feature_cols": feature_cols,
-            "init_train_n": init_train_n,
-            "mode": mode,
-            "vol_target_col": vol_target_col,
-        },
-        model_path,
     )
+    write_aligned_oos_csv(preds_df, preds_path, max_decimals=6)
 
-    # --- Save report ---
+    # --- Save VOL report ---
     os.makedirs(out_reports, exist_ok=True)
     report_path = os.path.join(out_reports, f"{decile}_gb_vol_{mode}_report.txt")
     with open(report_path, "w", encoding="utf-8") as f:
@@ -289,7 +323,6 @@ def train_one_file_gb_vol(
 
     return {
         "decile": decile,
-        "model_path": model_path,
         "preds_path": preds_path,
         "report_path": report_path,
         "metrics": {"r2": wf["r2"], "mae": wf["mae"], "rmse": wf["rmse"]},
@@ -299,18 +332,12 @@ def train_one_file_gb_vol(
 
 # ----------------------------- Main -----------------------------
 
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--glob",
         default="data/processed/features_ME*_full.csv",
         help="Glob pattern for decile feature files.",
-    )
-    parser.add_argument(
-        "--models_dir",
-        default="models_gb_vol",
-        help="Where to save fitted GB VOL models.",
     )
     parser.add_argument(
         "--preds_dir",
@@ -345,27 +372,17 @@ def main():
     for fpath in files:
         print(" -", fpath)
 
-    errors = []
     for fpath in files:
         try:
             _ = train_one_file_gb_vol(
                 csv_path=fpath,
-                out_models=args.models_dir,
                 out_preds=args.preds_dir,
                 out_reports=args.reports_dir,
                 prefer_train_months=args.train_months,
                 mode=args.mode,
             )
         except Exception as e:
-            errors.append((fpath, str(e)))
             print(f"\n[ERROR] {fpath} -> {e}\n")
-
-    if errors:
-        os.makedirs("results", exist_ok=True)
-        with open("results/train_gb_vol_errors.txt", "w", encoding="utf-8") as f:
-            for path, msg in errors:
-                f.write(f"{path}: {msg}\n")
-        print("Some GB VOL files failed. See → results/train_gb_vol_errors.txt")
 
 
 if __name__ == "__main__":

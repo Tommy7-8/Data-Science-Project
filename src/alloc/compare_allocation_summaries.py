@@ -1,39 +1,41 @@
 # src/alloc/compare_allocation_summaries.py
 # Compare performance of:
-#   - Baseline (linear regression MV allocator)
-#   - GB (gradient boosting MV allocator)
+#   - Baseline LR MV allocator
+#   - GB MV allocator
 #
 # Reads:
-#   - results/alloc/performance_baseline_meta.json
+#   - results/alloc_lr/performance_baseline_meta.json
 #   - results/alloc_gb/performance_gb_mv_meta.json
 #
 # Writes:
 #   - results/alloc_comparison/summary_lr_vs_gb.csv  (semicolon, aligned)
-# and prints a small console summary.
 
 import json
 from pathlib import Path
 import pandas as pd
 
-BASE_META_PATH = Path("results/alloc/performance_baseline_meta.json")
+BASE_META_PATH = Path("results/alloc_lr/performance_baseline_meta.json")
 GB_META_PATH   = Path("results/alloc_gb/performance_gb_mv_meta.json")
 
-OUT_DIR        = Path("results/alloc_comparison")
-OUT_SUMMARY    = OUT_DIR / "summary_lr_vs_gb.csv"
+OUT_DIR     = Path("results/alloc_comparison")
+OUT_SUMMARY = OUT_DIR / "summary_lr_vs_gb.csv"
 
 
 def _fmt_num(val, decimals=6):
-    if val is None:
+    if val is None or pd.isna(val):
         return ""
     try:
-        return f"{float(val):.{decimals}f}"
+        s = f"{float(val):.{decimals}f}"
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
+        return s
     except Exception:
         return str(val)
 
 
 def write_aligned_csv(df: pd.DataFrame, path: Path, decimals: int = 6, sep: str = ";"):
     df_str = df.copy()
-    left_cols = [c for c in df_str.columns if c == "metric"]
+    left_cols  = [c for c in df_str.columns if c == "metric"]
     right_cols = [c for c in df_str.columns if c not in left_cols]
 
     # format numeric-looking columns
@@ -69,12 +71,12 @@ def write_aligned_csv(df: pd.DataFrame, path: Path, decimals: int = 6, sep: str 
 
 
 def main():
-    root = Path.cwd()
+    root       = Path.cwd()
     base_meta_p = root / BASE_META_PATH
     gb_meta_p   = root / GB_META_PATH
 
     if not base_meta_p.exists():
-        raise FileNotFoundError(f"Missing baseline meta JSON: {base_meta_p}")
+        raise FileNotFoundError(f"Missing baseline LR meta JSON: {base_meta_p}")
     if not gb_meta_p.exists():
         raise FileNotFoundError(f"Missing GB meta JSON: {gb_meta_p}")
 
@@ -83,7 +85,6 @@ def main():
     with open(gb_meta_p, "r", encoding="utf-8") as f:
         gb_meta = json.load(f)
 
-    # pick a consistent set of metrics
     metrics_order = [
         "mean_monthly_return",
         "annualized_return",

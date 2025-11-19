@@ -1,26 +1,9 @@
 {
-  "method": "GB mean-variance with shrinkage covariance + weight cap",
-  "cap": 0.4,
+  "method": "GB mean-variance",
+  "weight_cap": 0.4,
   "inputs": {
-    "gb_preds_ret_panel": "results\\gb_panels_returns\\gb_oos_returns_panel.csv",
-    "gb_preds_vol_panel": "results\\gb_panels_vol\\gb_oos_vol_panel.csv",
-    "true_ret_panel": "results\\oos_panel\\true_panel.csv"
-  },
-  "deciles": [
-    "ME1",
-    "ME2",
-    "ME3",
-    "ME4",
-    "ME5",
-    "ME6",
-    "ME7",
-    "ME8",
-    "ME9",
-    "ME10"
-  ],
-  "cov_window_months": 120,
-  "min_cov_obs": 24,
-  "shrinkage_to_diag": 0.5,
-  "vol_blend": 0.5,
-  "notes": "GB preds_vol_panel used as risk proxy; covariance from past realized returns with diagonal shrinkage; unconstrained direction \u03a3^{-1}\u03bc projected onto capped simplex."
+    "gb_pred_returns": "results\\oos_panel_gb\\preds_panel_gb.csv",
+    "gb_pred_vol": "results\\oos_vol_panel_gb\\preds_vol_panel_gb.csv",
+    "true_returns": "results\\oos_panel_lr\\true_panel_lr.csv"
+  }
 }

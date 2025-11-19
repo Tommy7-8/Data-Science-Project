@@ -1,34 +1,36 @@
-# src/alloc/evaluate_allocation_gb.py
-# Evaluate realized portfolio performance using *GB* weights and true returns.
-# Includes transaction costs and turnover limits for realism.
-# Outputs aligned CSV (semicolon, dot decimals) and JSON summary.
+# src/alloc/evaluate_allocation_gb_mv.py
+# Evaluate realized portfolio performance for GB weights using true LR returns.
+# Includes transaction costs and turnover limits.
+# Outputs aligned CSV (semicolon, trimmed decimals) and JSON summary.
 
 import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# --- GB-specific paths ---
 REL_WEIGHTS  = Path("results/alloc_gb/weights_gb_mv.csv")
-REL_TRUES    = Path("results/oos_panel/true_panel.csv")
+REL_TRUES    = Path("results/oos_panel_lr/true_panel_lr.csv")   # <-- FIXED
 REL_OUT_DIR  = Path("results/alloc_gb")
 REL_OUT_CSV  = REL_OUT_DIR / "performance_gb_mv.csv"
 REL_OUT_META = REL_OUT_DIR / "performance_gb_mv_meta.json"
 
-# ---- Parameters for realism ----
-TRANSACTION_COST = 0.001   # 0.10% per 1.0 turnover (10 bps)
-TURNOVER_LIMIT   = 0.20    # max 20% turnover per month
+# ---- Parameters ----
+TRANSACTION_COST = 0.001
+TURNOVER_LIMIT   = 0.20
 
-
-# ---------- pretty CSV writer (semicolon, dot decimals, aligned columns) ----------
+# ---------- Trimmed, aligned CSV writer ----------
 def _fmt_num(val, decimals=6):
     if pd.isna(val):
         return ""
-    return f"{float(val):.{decimals}f}"
-
+    s = f"{float(val):.{decimals}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
 
 def write_aligned_csv(df: pd.DataFrame, path: Path, decimals: int = 6, sep: str = ";"):
     df_str = df.copy()
-    left_cols = [c for c in df_str.columns if c == "month"]
+    left_cols  = ["month"]
     right_cols = [c for c in df_str.columns if c not in left_cols]
 
     for c in right_cols:
@@ -56,21 +58,18 @@ def write_aligned_csv(df: pd.DataFrame, path: Path, decimals: int = 6, sep: str 
 
     path.write_text("\n".join(lines), encoding="utf-8-sig")
 
-
-# ---------- performance helpers ----------
+# ---------- Helpers ----------
 def compute_drawdown(returns: pd.Series) -> float:
     cum = (1 + returns).cumprod()
     peak = cum.cummax()
     dd = (cum / peak) - 1.0
     return float(dd.min())
 
-
 def compute_turnover(weights_df: pd.DataFrame, deciles) -> pd.Series:
     w_prev = weights_df[deciles].shift(1)
-    turnover = (weights_df[deciles] - w_prev).abs().sum(axis=1) / 2.0
-    return turnover
+    return (weights_df[deciles] - w_prev).abs().sum(axis=1) / 2.0
 
-
+# ---------- MAIN ----------
 def main():
     root = Path.cwd()
     weights_p = root / REL_WEIGHTS
@@ -80,52 +79,48 @@ def main():
     out_meta  = root / REL_OUT_META
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---- Load weights (GB) and true returns (semicolon-separated, aligned) ----
+    # --- Load weights + true returns ---
     W = pd.read_csv(weights_p, sep=";", encoding="utf-8-sig")
-    R = pd.read_csv(trues_p,   sep=";", encoding="utf-8-sig")
+    R = pd.read_csv(trues_p,  sep=";", encoding="utf-8-sig")
 
     W.columns = [c.strip() for c in W.columns]
     R.columns = [c.strip() for c in R.columns]
 
     if "month" not in W.columns or "month" not in R.columns:
-        raise ValueError("Both weights_gb_mv.csv and true_panel.csv must have a 'month' column.")
+        raise ValueError("Both weights_gb_mv.csv and true_panel_lr.csv must contain 'month'.")
 
     deciles = [c for c in W.columns if c.startswith("ME")]
     if len(deciles) != 10:
-        raise ValueError(f"Expected 10 ME columns in GB weights file, found {deciles}")
+        raise ValueError(f"Expected 10 ME columns in weights, found: {deciles}")
 
-    # ---- Align on common months ----
+    # --- Merge and align ---
     df = pd.merge(W, R, on="month", suffixes=("_w", "_r"))
     df = df.sort_values("month").reset_index(drop=True)
 
-    # ---- Compute gross portfolio return each month ----
-    ret_cols = [f"{d}_r" for d in deciles]
+    # --- Compute gross returns ---
     w_cols   = [f"{d}_w" for d in deciles]
-
+    ret_cols = [f"{d}_r" for d in deciles]
     df["gross_ret"] = (df[w_cols].values * df[ret_cols].values).sum(axis=1)
 
-    # ---- Compute turnover and apply limits ----
-    # For turnover, we want a df with columns ME1..ME10, so strip "_w"
-    weights_for_turn = df[w_cols].copy()
-    weights_for_turn.columns = [c.replace("_w", "") for c in weights_for_turn.columns]
-    weights_for_turn.insert(0, "month", df["month"].values)
+    # --- Turnover ---
+    W_turn = df[w_cols].copy()
+    W_turn.columns = [c.replace("_w", "") for c in W_turn.columns]
+    W_turn["month"] = df["month"]
 
-    df["turnover"] = compute_turnover(weights_for_turn, deciles)
+    df["turnover"] = compute_turnover(W_turn, deciles)
     df["turnover_limited"] = df["turnover"].clip(upper=TURNOVER_LIMIT)
 
-    # ---- Apply transaction cost penalty ----
+    # --- Net returns ---
     df["net_ret"] = df["gross_ret"] - df["turnover_limited"] * TRANSACTION_COST
 
-    # ---- Compute summary statistics ----
+    # --- Summary statistics ---
     rets = df["net_ret"]
     mean_ret = float(rets.mean())
-    vol = float(rets.std())
-    sharpe = (mean_ret / vol * np.sqrt(12)) if vol > 0 else np.nan
-    ann_ret = (1 + mean_ret) ** 12 - 1
-    ann_vol = vol * np.sqrt(12)
-    dd = compute_drawdown(rets)
-    avg_turn = float(df["turnover"].mean())
-    avg_turn_limited = float(df["turnover_limited"].mean())
+    vol      = float(rets.std())
+    sharpe   = (mean_ret / vol * np.sqrt(12)) if vol > 0 else np.nan
+    ann_ret  = (1 + mean_ret) ** 12 - 1
+    ann_vol  = vol * np.sqrt(12)
+    dd       = compute_drawdown(rets)
 
     summary = {
         "mean_monthly_return": mean_ret,
@@ -133,27 +128,25 @@ def main():
         "annualized_volatility": ann_vol,
         "sharpe_ratio": sharpe,
         "max_drawdown": dd,
-        "avg_turnover": avg_turn,
-        "avg_turnover_after_limit": avg_turn_limited,
+        "avg_turnover": float(df["turnover"].mean()),
+        "avg_turnover_after_limit": float(df["turnover_limited"].mean()),
         "transaction_cost": TRANSACTION_COST,
         "turnover_limit": TURNOVER_LIMIT,
     }
 
-    # ---- Save aligned CSV of monthly performance ----
-    out_df = df[["month", "gross_ret", "net_ret", "turnover", "turnover_limited"]].copy()
+    # --- Save results ---
+    out_df = df[["month", "gross_ret", "net_ret", "turnover", "turnover_limited"]]
     write_aligned_csv(out_df, out_csv, decimals=6, sep=";")
 
-    # ---- Save JSON summary ----
     with open(out_meta, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    # ---- Console summary ----
     print(f"Saved GB monthly performance → {out_csv}")
     print(f"Saved GB summary JSON        → {out_meta}")
+
     print("\nGB MV key metrics:")
     for k, v in summary.items():
-        print(f" {k:30s}: {v:.6f}")
-
+        print(f" {k:30s}: {v if not isinstance(v, float) else f'{v:.6f}'}")
 
 if __name__ == "__main__":
     main()

@@ -5,21 +5,21 @@
 #  - EW_10 (equal-weight of 10 size deciles)
 #  - Market (if available)
 #
-# Outputs (all in results/benchmark/):
+# Outputs (in results/benchmark/):
 #   - benchmarks_panel.csv   : monthly returns
 #   - benchmarks_summary.csv : Sharpe/Sortino with CIs, max DD
 #   - benchmarks_tests.csv   : Diebold–Mariano tests
 
-import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy import stats
 
-# ---- Paths ----
-PERF_LR_PATH = Path("results/alloc/performance_baseline.csv")
+# ---- Paths (aligned with your current pipeline) ----
+PERF_LR_PATH = Path("results/alloc_lr/performance_baseline.csv")
 PERF_GB_PATH = Path("results/alloc_gb/performance_gb_mv.csv")
-TRUE_PANEL   = Path("results/oos_panel/true_panel.csv")
+
+TRUE_PANEL   = Path("results/oos_panel_lr/true_panel_lr.csv")
 PROC_FULL    = Path("data/processed/ff_size_deciles_with_ff3_monthly_decimals.csv")
 
 OUT_DIR      = Path("results/benchmark")
@@ -28,13 +28,15 @@ SUMM_OUT     = OUT_DIR / "benchmarks_summary.csv"
 TESTS_OUT    = OUT_DIR / "benchmarks_tests.csv"
 
 
-# ---------- Helpers ----------
+# ---------- Formatting helpers ----------
 
 def _fmt_num(val, decimals=6):
     if pd.isna(val):
         return ""
-    return f"{float(val):.{decimals}f}"
-
+    s = f"{float(val):.{decimals}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
 
 def write_aligned_csv(df: pd.DataFrame, path: Path, decimals=6, sep=";"):
     df_str = df.copy()
@@ -43,7 +45,10 @@ def write_aligned_csv(df: pd.DataFrame, path: Path, decimals=6, sep=";"):
             ser = pd.to_numeric(df_str[c], errors="coerce")
             if ser.notna().any():
                 df_str[c] = ser.map(lambda v: _fmt_num(v, decimals))
-    widths = {c: max(len(c), df_str[c].astype(str).map(len).max()) for c in df_str.columns}
+    widths = {
+        c: max(len(c), df_str[c].astype(str).map(len).max())
+        for c in df_str.columns
+    }
 
     header = sep.join(
         f"{c:<{widths[c]}}" if c == "month" else f"{c:>{widths[c]}}"
@@ -63,12 +68,15 @@ def write_aligned_csv(df: pd.DataFrame, path: Path, decimals=6, sep=";"):
 
 
 def load_semicolon_csv(path: Path) -> pd.DataFrame:
+    """Robust loader for our aligned ; CSVs."""
     df = pd.read_csv(path, sep=";", dtype=str, encoding="utf-8-sig", engine="python")
     df.columns = [c.strip().lstrip("\ufeff") for c in df.columns]
     obj_cols = df.select_dtypes(include="object").columns
     df[obj_cols] = df[obj_cols].apply(lambda s: s.str.strip())
     return df
 
+
+# ---------- Metric helpers ----------
 
 def max_drawdown(r: pd.Series) -> float:
     cum = (1 + r).cumprod()
@@ -86,7 +94,7 @@ def sharpe_ci_annualized(r: pd.Series, n_boot=2000, ci=0.95):
         std = s.std()
         if std > 0:
             boot.append((s.mean() / std) * np.sqrt(12))
-    if len(boot) == 0:
+    if not boot:
         return np.nan, np.nan
     low, high = np.percentile(boot, [(1 - ci) / 2 * 100, (1 + ci) / 2 * 100])
     return float(low), float(high)
@@ -94,12 +102,10 @@ def sharpe_ci_annualized(r: pd.Series, n_boot=2000, ci=0.95):
 
 def sortino_ratio(r: pd.Series):
     r = r.dropna()
-    if len(r) == 0:
+    d = r[r < 0]
+    if len(d) == 0:
         return np.nan
-    downside = r[r < 0]
-    if len(downside) == 0:
-        return np.nan
-    dd = downside.std()
+    dd = d.std()
     if dd <= 0:
         return np.nan
     return (r.mean() / dd) * np.sqrt(12)
@@ -113,13 +119,13 @@ def sortino_ci_annualized(r: pd.Series, n_boot=2000, ci=0.95):
     boot = []
     for _ in range(n_boot):
         s = rng.choice(r, size=len(r), replace=True)
-        downside = s[s < 0]
-        if len(downside) == 0:
+        d = s[s < 0]
+        if len(d) == 0:
             continue
-        dd = downside.std()
+        dd = d.std()
         if dd > 0:
             boot.append((s.mean() / dd) * np.sqrt(12))
-    if len(boot) == 0:
+    if not boot:
         return np.nan, np.nan
     low, high = np.percentile(boot, [(1 - ci) / 2 * 100, (1 + ci) / 2 * 100])
     return float(low), float(high)
@@ -128,41 +134,26 @@ def sortino_ci_annualized(r: pd.Series, n_boot=2000, ci=0.95):
 def series_metrics(r: pd.Series):
     r = r.dropna()
     if len(r) == 0:
-        return dict(
-            mean_m=np.nan,
-            ann_ret=np.nan,
-            ann_vol=np.nan,
-            sharpe=np.nan,
-            sharpe_low=np.nan,
-            sharpe_high=np.nan,
-            sortino=np.nan,
-            sortino_low=np.nan,
-            sortino_high=np.nan,
-            max_dd=np.nan,
-        )
+        return {k: np.nan for k in [
+            "mean_m", "ann_ret", "ann_vol", "sharpe", "sharpe_low",
+            "sharpe_high", "sortino", "sortino_low", "sortino_high", "max_dd"
+        ]}
     m, v = r.mean(), r.std()
     ann_ret = (1 + m) ** 12 - 1
     ann_vol = v * np.sqrt(12)
-
     sharpe = (m / v) * np.sqrt(12) if v > 0 else np.nan
     s_lo, s_hi = sharpe_ci_annualized(r)
-
     sort = sortino_ratio(r)
     so_lo, so_hi = sortino_ci_annualized(r)
-
     return dict(
-        mean_m=m,
-        ann_ret=ann_ret,
-        ann_vol=ann_vol,
-        sharpe=sharpe,
-        sharpe_low=s_lo,
-        sharpe_high=s_hi,
-        sortino=sort,
-        sortino_low=so_lo,
-        sortino_high=so_hi,
+        mean_m=m, ann_ret=ann_ret, ann_vol=ann_vol,
+        sharpe=sharpe, sharpe_low=s_lo, sharpe_high=s_hi,
+        sortino=sort, sortino_low=so_lo, sortino_high=so_hi,
         max_dd=max_drawdown(r),
     )
 
+
+# ---------- DM test helpers ----------
 
 def hac_var(d: np.ndarray, lags: int) -> float:
     d = d - d.mean()
@@ -176,7 +167,6 @@ def hac_var(d: np.ndarray, lags: int) -> float:
 
 
 def diebold_mariano_test(x: pd.Series, y: pd.Series):
-    # DM test on difference of returns x - y
     x, y = x.dropna(), y.dropna()
     common = x.index.intersection(y.index)
     x, y = x.loc[common], y.loc[common]
@@ -185,12 +175,12 @@ def diebold_mariano_test(x: pd.Series, y: pd.Series):
     if T < 10:
         return np.nan, np.nan
     var_mean = hac_var(d, int(T ** (1 / 3)))
-    dm = d.mean() / np.sqrt(var_mean)
-    p = 2 * (1 - stats.norm.cdf(abs(dm)))
-    return float(dm), float(p)
+    dm_stat = d.mean() / np.sqrt(var_mean)
+    p_val = 2 * (1 - stats.norm.cdf(abs(dm_stat)))
+    return float(dm_stat), float(p_val)
 
 
-# ---------- Main ----------
+# ---------- MAIN ----------
 
 def main():
     # 1) Load LR and GB performance (net of costs)
@@ -207,7 +197,7 @@ def main():
     true_ = load_semicolon_csv(TRUE_PANEL)
     true_.columns = [c.strip() for c in true_.columns]
     if "month" not in true_.columns:
-        raise ValueError("true_panel.csv must have a 'month' column")
+        raise ValueError("true_panel_lr.csv must have a 'month' column")
 
     deciles = [c for c in true_.columns if c.startswith("ME")]
     for c in deciles:
@@ -219,7 +209,7 @@ def main():
     proc = load_semicolon_csv(PROC_FULL)
     proc.columns = [c.strip() for c in proc.columns]
     date_col = "date" if "date" in proc.columns else "month"
-    proc["month"] = pd.to_datetime(proc[date_col]).dt.to_period("M").astype(str)
+    proc["month"] = pd.to_datetime(proc[date_col], errors="coerce").dt.to_period("M").astype(str)
 
     market_available = ("Mkt-RF" in proc.columns) and ("RF" in proc.columns)
     if market_available:
@@ -234,7 +224,7 @@ def main():
     panel = (
         perf_lr
         .merge(perf_gb, on="month", how="inner")
-        .merge(ew, on="month", how="inner")
+        .merge(ew,      on="month", how="inner")
     )
 
     if market_available:
@@ -247,13 +237,12 @@ def main():
     if "Market" in panel.columns:
         series_cols.append("Market")
 
-    rows = [dict(series=s, **series_metrics(panel[s])) for s in series_cols]
-    summary = pd.DataFrame(rows)
+    summary_rows = [dict(series=s, **series_metrics(panel[s])) for s in series_cols]
+    summary = pd.DataFrame(summary_rows)
 
-    # 6) DM tests:
-    #    LR vs EW_10/Market, GB vs EW_10/Market, GB vs LR
+    # 6) DM tests
     tests = []
-    # helper closure
+
     def add_dm(name, a, b):
         dm, p = diebold_mariano_test(a, b)
         tests.append(dict(comparison=name, DM_stat=dm, p_value=p))
@@ -282,16 +271,6 @@ def main():
     print(f"Saved unified benchmarks panel   → {PANEL_OUT}")
     print(f"Saved unified benchmarks summary → {SUMM_OUT}")
     print(f"Saved unified DM tests           → {TESTS_OUT}")
-
-    print("\nAnnualized Sharpe (95% CI) and Sortino (95% CI):")
-    for _, r in summary.iterrows():
-        print(
-            f" {r['series']:>10s} | Sharpe {r['sharpe']:.3f} "
-            f"(CI [{r['sharpe_low']:.3f},{r['sharpe_high']:.3f}])"
-            f" | Sortino {r['sortino']:.3f} "
-            f"(CI [{r['sortino_low']:.3f},{r['sortino_high']:.3f}])"
-        )
-
 
 if __name__ == "__main__":
     main()

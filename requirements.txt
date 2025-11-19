@@ -1,10 +1,6 @@
 pandas
 numpy
 scikit-learn
-statsmodels
-cvxpy
 matplotlib
-tqdm
+scipy
 requests
-pyyaml
-pytest

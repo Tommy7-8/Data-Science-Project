@@ -12,12 +12,16 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.ticker as mtick  # <-- NEW
 
 PANEL_PATH = Path("results/benchmark/benchmarks_panel.csv")
 OUT_FIG    = Path("results/benchmark/cumulative_returns.png")
 
 
 def main():
+    if not PANEL_PATH.exists():
+        raise FileNotFoundError(f"Missing benchmarks panel: {PANEL_PATH}")
+
     df = pd.read_csv(PANEL_PATH, sep=";", encoding="utf-8-sig")
     df.columns = [c.strip().lstrip("\ufeff") for c in df.columns]
 
@@ -32,15 +36,22 @@ def main():
     df["month"] = pd.to_datetime(df["month"], format="%Y-%m", errors="coerce")
     df = df.dropna(subset=["month"])
 
-    # Compute cumulative returns (growth of $1)
-    # Expected columns: net_ret_lr, net_ret_gb, EW_10, optionally Market
-    cols = [c for c in df.columns if c != "month"]
-    for c in cols:
-        df[f"cum_{c}"] = (1 + df[c]).cumprod()
+    if df.empty:
+        raise ValueError("No valid rows in benchmarks_panel.csv after parsing 'month'.")
+
+    # ----- Restrict to 1980 onwards -----
+    cutoff = pd.Timestamp(1980, 1, 1)
+    df = df[df["month"] >= cutoff].copy()
+    if df.empty:
+        raise ValueError("No data available from 1980 onwards in benchmarks_panel.csv.")
+    # ------------------------------------
+
+    # Compute cumulative returns (growth of 1)
+    ret_cols = [c for c in df.columns if c != "month"]
+    for c in ret_cols:
+        df[f"cum_{c}"] = (1.0 + df[c]).cumprod()
 
     plt.figure(figsize=(11, 6))
-    plt.style.use("seaborn-v0_8-muted")
-
     ax = plt.gca()
 
     # --- Plot main lines (only if they exist) ---
@@ -61,10 +72,15 @@ def main():
                 label="Market (Mkt-RF + RF)", linewidth=2.0, linestyle="--")
 
     # --- Formatting ---
-    ax.set_title("Cumulative Returns: LR vs GB vs Benchmarks",
+    ax.set_title("Cumulative Returns: LR vs GB vs Benchmarks (from 1980)",
                  fontsize=14, weight="bold", pad=10)
-    ax.set_ylabel("Growth of $1")
+    ax.set_ylabel("Growth of 1")
     ax.set_xlabel("Year")
+
+    # More precise Y axis: more ticks + 2 decimals
+    ax.yaxis.set_major_locator(mtick.MaxNLocator(nbins=20))          # more tick marks
+    ax.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.2f'))   # 2 decimal places
+
     ax.grid(alpha=0.25)
 
     # X-axis: show only years (every 5 years)
@@ -79,7 +95,7 @@ def main():
 
     OUT_FIG.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(OUT_FIG, dpi=300)
-    plt.show()
+    plt.close()
 
     print(f"Saved cumulative returns chart → {OUT_FIG}")
 

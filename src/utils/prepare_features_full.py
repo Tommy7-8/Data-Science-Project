@@ -35,10 +35,16 @@ def load_processed_csv(path: str) -> pd.DataFrame:
         return pd.read_csv(path, encoding="utf-8-sig")
 
 # ---------- pretty CSV writer (semicolon, dot decimals, aligned columns) ----------
-def fmt_num(val, decimals=6):
+def fmt_num(val, max_decimals=6, dec_char="."):
+    """Match download_ff.py: format without unnecessary trailing zeros."""
     if pd.isna(val):
         return ""
-    return f"{val:.{decimals}f}"  # dot decimals
+    s = f"{val:.{max_decimals}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    if dec_char != ".":
+        s = s.replace(".", dec_char)
+    return s
 
 def write_aligned_csv(df: pd.DataFrame, path: str, decimals: int = 6):
     df_txt = df.copy()
