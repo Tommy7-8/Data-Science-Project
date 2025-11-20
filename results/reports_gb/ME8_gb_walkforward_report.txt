@@ -2,8 +2,8 @@ decile: ME8
 file: data/processed\features_ME8_full.csv
 date_range: 1927-07 → 2025-08
 initial_train_months: 240 (through 1947-06)
-mode: static
+mode: walkforward_early_stopping
 oos_months: 938 (through 2025-09)
-oos_r2: -0.46264922294549926
-oos_mae: 0.043322410886726094
-oos_rmse: 0.05796395839452352
+oos_r2: -0.016050794701959692
+oos_mae: 0.036875248494710924
+oos_rmse: 0.04831095844757411

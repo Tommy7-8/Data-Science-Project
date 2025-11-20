@@ -1,6 +1,6 @@
 ﻿      comparison;  DM_stat; p_value
  LR_net vs EW_10; 0.851493;0.394496
 LR_net vs Market; 1.525676;0.127091
- GB_net vs EW_10;  0.59189;0.553925
-GB_net vs Market; 1.385093;0.166024
-GB_net vs LR_net;-0.237133;0.812554
+ GB_net vs EW_10;-1.084011; 0.27836
+GB_net vs Market; 1.131702; 0.25776
+GB_net vs LR_net;-1.379754;0.167662

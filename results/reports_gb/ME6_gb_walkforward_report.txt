@@ -2,9 +2,8 @@ decile: ME6
 file: data/processed\features_ME6_full.csv
 date_range: 1927-07 → 2025-08
 initial_train_months: 240 (through 1947-06)
-mode: static
-vol_target_col: ME6_vol_3m
+mode: walkforward_early_stopping
 oos_months: 938 (through 2025-09)
-oos_r2: 0.13748116299334723
-oos_mae: 0.01553618655532774
-oos_rmse: 0.020265590326554908
+oos_r2: -0.008259086175495645
+oos_mae: 0.03900548365103881
+oos_rmse: 0.0510643017162845

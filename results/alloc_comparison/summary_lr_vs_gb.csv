@@ -1,10 +1,10 @@
-﻿metric                  ;baseline_lr;    gb_mv;gb_minus_baseline
-mean_monthly_return     ;   0.011158; 0.011085;        -0.000073
-annualized_return       ;   0.142422; 0.141436;        -0.000986
-annualized_volatility   ;   0.175285; 0.178514;         0.003229
-sharpe_ratio            ;   0.763852; 0.745145;        -0.018707
-max_drawdown            ;  -0.545731;-0.547584;        -0.001853
-avg_turnover            ;   0.580263; 0.539769;        -0.040494
-avg_turnover_after_limit;   0.199223; 0.199339;         0.000116
-transaction_cost        ;      0.001;    0.001;                0
-turnover_limit          ;        0.2;      0.2;                0
+﻿metric                  ;baseline_lr;   gb_mv;gb_minus_baseline
+mean_monthly_return     ;   0.011158;0.010821;        -0.000337
+annualized_return       ;   0.142422;0.137862;         -0.00456
+annualized_volatility   ;   0.175285;0.174523;        -0.000762
+sharpe_ratio            ;   0.763852;0.744019;        -0.019833
+max_drawdown            ;  -0.545731;-0.52125;         0.024482
+avg_turnover            ;   0.580263;0.243911;        -0.336353
+avg_turnover_after_limit;   0.199223;0.165919;        -0.033305
+transaction_cost        ;      0.001;   0.001;                0
+turnover_limit          ;        0.2;     0.2;                0

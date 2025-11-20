@@ -1,9 +1,11 @@
 # src/models/train_all_gb_vol.py
-# Train Gradient Boosting per decile and produce WALK-FORWARD *volatility* predictions (GB version).
+# Train Gradient Boosting per decile and produce WALK-FORWARD *volatility* predictions (GB version),
+# with early stopping.
 #
 # Outputs (per decile, GB VOL):
-#   - results/oos_vol_gb/MEj_oos_vol_preds_gb.csv    (aligned ; CSV: month, y_true, y_pred)
-#   - results/reports_gb_vol/MEj_gb_vol_<mode>_report.txt
+#   - results/oos_vol_gb/MEj_oos_vol_preds_gb.csv
+#       (aligned ; CSV: month, y_true, y_pred)
+#   - results/reports_gb_vol/MEj_gb_vol_walkforward_report.txt
 
 import os
 import re
@@ -21,6 +23,7 @@ N_LAGS = 12  # kept for reference, not directly used
 
 
 # ----------------------------- Helpers -----------------------------
+
 
 def select_vol_features(df: pd.DataFrame, decile_prefix: str) -> List[str]:
     """
@@ -69,10 +72,14 @@ def infer_vol_target_col(df: pd.DataFrame, decile_prefix: str) -> str:
 
 
 def first_train_size(n_obs: int, prefer_train_months: int = 240, min_train: int = 120) -> int:
+    """
+    Choose initial training window length in months.
+    """
     return max(min_train, min(prefer_train_months, n_obs - 1))
 
 
 # -------- robust loader for aligned feature CSVs (semicolon + padded) --------
+
 
 def load_feature_csv(path: str) -> pd.DataFrame:
     """
@@ -98,6 +105,7 @@ def load_feature_csv(path: str) -> pd.DataFrame:
 
 
 # ---------- aligned CSV writer for GB VOL OOS predictions ----------
+
 
 def fmt_num(val, max_decimals: int = 6, dec_char: str = ".") -> str:
     """Format numbers without unnecessary trailing zeros."""
@@ -147,17 +155,23 @@ def write_aligned_oos_csv(df: pd.DataFrame, path: str, max_decimals: int = 6, se
 
 # ------------------------ GBM training & prediction ------------------------
 
+
 def make_gbm() -> HistGradientBoostingRegressor:
     """
-    Fixed, reasonably good and fast GBM config.
+    Gradient Boosting model with early stopping.
+    - max_iter is an upper cap; effective number of trees is chosen
+      via validation-based early stopping inside each training window.
     """
     return HistGradientBoostingRegressor(
         random_state=0,
-        max_iter=300,
+        max_iter=1000,          # upper bound on trees
         learning_rate=0.05,
         max_depth=3,
         min_samples_leaf=20,
         max_bins=64,
+        early_stopping=True,
+        n_iter_no_change=10,    # stop if no improvement for 10 iterations
+        validation_fraction=0.2 # 20% of training window used as validation
     )
 
 
@@ -166,36 +180,25 @@ def walkforward_predictions(
     y: np.ndarray,
     months: np.ndarray,
     init_train_n: int,
-    mode: str = "static",
 ) -> Dict[str, Any]:
     """
-    Two modes:
+    Pure walk-forward scheme:
+      - For t = init_train_n, ..., n-1:
+          * fit GBM on data up to t-1 (expanding window)
+          * predict y_t
 
-      - static: fit once on first `init_train_n` months, predict all later months.
-      - walkforward: refit GBM each month on an expanding window (slower, more adaptive).
+    Early stopping chooses the effective number of trees in each fit.
     """
     n = len(y)
     preds, truths, pred_months = [], [], []
-    model = None
 
-    if mode == "static":
+    for t in range(init_train_n, n):
         model = make_gbm()
-        model.fit(X[:init_train_n], y[:init_train_n])
-        for t in range(init_train_n, n):
-            y_hat = float(model.predict(X[t:t+1])[0])
-            preds.append(y_hat)
-            truths.append(float(y[t]))
-            pred_months.append(str(months[t]))
-    elif mode == "walkforward":
-        for t in range(init_train_n, n):
-            model = make_gbm()
-            model.fit(X[:t], y[:t])
-            y_hat = float(model.predict(X[t:t+1])[0])
-            preds.append(y_hat)
-            truths.append(float(y[t]))
-            pred_months.append(str(months[t]))
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
+        model.fit(X[:t], y[:t])
+        y_hat = float(model.predict(X[t:t+1])[0])
+        preds.append(y_hat)
+        truths.append(float(y[t]))
+        pred_months.append(str(months[t]))
 
     y_pred = np.array(preds)
     y_true = np.array(truths)
@@ -211,11 +214,11 @@ def walkforward_predictions(
         "rmse": rmse,
         "mae": mae,
         "r2": None if np.isnan(r2) else r2,
-        "model": model,
     }
 
 
 # ------------------------ Train one decile file ------------------------
+
 
 def _infer_decile_from_filename(base: str) -> str:
     """
@@ -240,7 +243,6 @@ def train_one_file_gb_vol(
     out_preds: str,
     out_reports: str,
     prefer_train_months: int = 240,
-    mode: str = "static",
 ) -> Dict[str, Any]:
     base = os.path.basename(csv_path)
     decile = _infer_decile_from_filename(base)
@@ -278,14 +280,13 @@ def train_one_file_gb_vol(
         y=y,
         months=months,
         init_train_n=init_train_n,
-        mode=mode,
     )
 
     start_ym = df["date"].iloc[0].to_period("M")
     end_ym = df["date"].iloc[-1].to_period("M")
     train_end_ym = df["date"].iloc[init_train_n - 1].to_period("M")
 
-    print(f"\n=== {decile} (GB VOL, mode={mode}) ===")
+    print(f"\n=== {decile} (GB VOL, walkforward with early stopping) ===")
     print(f"File: {csv_path}")
     print(f"Date range: {start_ym} → {end_ym}")
     print(f"Initial TRAIN: {start_ym} → {train_end_ym}  ({init_train_n} months)")
@@ -308,13 +309,13 @@ def train_one_file_gb_vol(
 
     # --- Save VOL report ---
     os.makedirs(out_reports, exist_ok=True)
-    report_path = os.path.join(out_reports, f"{decile}_gb_vol_{mode}_report.txt")
+    report_path = os.path.join(out_reports, f"{decile}_gb_vol_walkforward_report.txt")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(f"decile: {decile}\n")
         f.write(f"file: {csv_path}\n")
         f.write(f"date_range: {start_ym} → {end_ym}\n")
         f.write(f"initial_train_months: {init_train_n} (through {train_end_ym})\n")
-        f.write(f"mode: {mode}\n")
+        f.write("mode: walkforward_early_stopping\n")
         f.write(f"vol_target_col: {vol_target_col}\n")
         f.write(f"oos_months: {len(wf['months'])} (through {wf['months'][-1]})\n")
         f.write(f"oos_r2: {wf['r2']}\n")
@@ -331,6 +332,7 @@ def train_one_file_gb_vol(
 
 
 # ----------------------------- Main -----------------------------
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -355,12 +357,6 @@ def main():
         default=240,
         help="Initial training length (months).",
     )
-    parser.add_argument(
-        "--mode",
-        choices=["static", "walkforward"],
-        default="static",  # fast by default
-        help="static = fit once; walkforward = refit each month (slower).",
-    )
 
     args = parser.parse_args()
 
@@ -368,7 +364,9 @@ def main():
     if len(files) == 0:
         raise FileNotFoundError(f"No files matched: {args.glob}")
 
-    print(f"Found {len(files)} feature files for GB VOL training:")
+    print("Found {n} feature files for GB VOL training (walkforward + early stopping):".format(
+        n=len(files)
+    ))
     for fpath in files:
         print(" -", fpath)
 
@@ -379,7 +377,6 @@ def main():
                 out_preds=args.preds_dir,
                 out_reports=args.reports_dir,
                 prefer_train_months=args.train_months,
-                mode=args.mode,
             )
         except Exception as e:
             print(f"\n[ERROR] {fpath} -> {e}\n")

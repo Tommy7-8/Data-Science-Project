@@ -1,10 +1,9 @@
 # src/models/train_all_gb.py
 # Train Gradient Boosting per decile and produce WALK-FORWARD *return* predictions
-# (fast version: one GBM per decile, no per-step GridSearchCV)
 #
 # Outputs (per decile, GB returns):
 #   - results/oos_preds_gb/MEj_oos_preds_gb.csv   (aligned ; CSV: month, y_true, y_pred)
-#   - results/reports_gb/MEj_gb_<mode>_report.txt
+#   - results/reports_gb/MEj_gb_walkforward_report.txt
 
 import os
 import re
@@ -79,6 +78,7 @@ def load_feature_csv(path: str) -> pd.DataFrame:
 
 # ---------- aligned CSV writer for GB OOS predictions ----------
 
+
 def fmt_num(val, max_decimals: int = 6, dec_char: str = ".") -> str:
     """Format numbers without unnecessary trailing zeros."""
     if pd.isna(val):
@@ -133,16 +133,20 @@ def write_aligned_oos_csv(df: pd.DataFrame, path: str, max_decimals: int = 6, se
 
 def make_gbm() -> HistGradientBoostingRegressor:
     """
-    Fixed, reasonably fast GBM config (no grid search).
-    You can tweak these hyperparameters if needed.
+    Gradient Boosting model with early stopping.
+    - max_iter is an upper cap; effective number of trees is chosen
+      via validation-based early stopping inside each training window.
     """
     return HistGradientBoostingRegressor(
         random_state=0,
-        max_iter=300,        # total trees
+        max_iter=1000,          # upper bound on trees
         learning_rate=0.05,
         max_depth=3,
         min_samples_leaf=20,
-        max_bins=64
+        max_bins=64,
+        early_stopping=True,
+        n_iter_no_change=10,    # stop if no improvement for 10 iterations
+        validation_fraction=0.2 # 20% of training window used as validation
     )
 
 
@@ -151,40 +155,24 @@ def walkforward_predictions(
     y: np.ndarray,
     months: np.ndarray,
     init_train_n: int,
-    mode: str = "static",
 ) -> Dict[str, Any]:
     """
-    Two modes:
-
-    - static: fit one GBM on first `init_train_n` months, then predict all later months
-    - walkforward: refit GBM each month on an expanding window (slower but more adaptive)
+    Pure walk-forward scheme:
+      - For t = init_train_n, ..., n-1:
+          * fit GBM on data up to t-1 (expanding window)
+          * predict y_t
+    Early stopping chooses the effective number of trees in each fit.
     """
     n = len(y)
     preds, truths, pred_months = [], [], []
-    model = None
 
-    if mode == "static":
-        # Fit once on initial window
+    for t in range(init_train_n, n):
         model = make_gbm()
-        model.fit(X[:init_train_n], y[:init_train_n])
-
-        for t in range(init_train_n, n):
-            y_hat = float(model.predict(X[t:t+1])[0])
-            preds.append(y_hat)
-            truths.append(float(y[t]))
-            pred_months.append(str(months[t]))
-
-    elif mode == "walkforward":
-        # Refit each month with fixed hyperparams (no grid search)
-        for t in range(init_train_n, n):
-            model = make_gbm()
-            model.fit(X[:t], y[:t])
-            y_hat = float(model.predict(X[t:t+1])[0])
-            preds.append(y_hat)
-            truths.append(float(y[t]))
-            pred_months.append(str(months[t]))
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
+        model.fit(X[:t], y[:t])
+        y_hat = float(model.predict(X[t:t+1])[0])
+        preds.append(y_hat)
+        truths.append(float(y[t]))
+        pred_months.append(str(months[t]))
 
     y_pred = np.array(preds)
     y_true = np.array(truths)
@@ -200,7 +188,6 @@ def walkforward_predictions(
         "rmse": rmse,
         "mae": mae,
         "r2": None if np.isnan(r2) else r2,
-        "model": model,
     }
 
 
@@ -230,7 +217,6 @@ def train_one_file_gb(
     out_preds: str,
     out_reports: str,
     prefer_train_months: int = 240,
-    mode: str = "static",
 ) -> Dict[str, Any]:
 
     base = os.path.basename(csv_path)
@@ -269,14 +255,13 @@ def train_one_file_gb(
         y=y,
         months=months,
         init_train_n=init_train_n,
-        mode=mode,
     )
 
     start_ym = df["date"].iloc[0].to_period("M")
     end_ym = df["date"].iloc[-1].to_period("M")
     train_end_ym = df["date"].iloc[init_train_n - 1].to_period("M")
 
-    print(f"\n=== {decile} (GB RETURN, mode={mode}) ===")
+    print(f"\n=== {decile} (GB RETURN, walkforward with early stopping) ===")
     print(f"File: {csv_path}")
     print(f"Date range: {start_ym} → {end_ym}")
     print(f"Initial TRAIN: {start_ym} → {train_end_ym}  ({init_train_n} months)")
@@ -296,13 +281,13 @@ def train_one_file_gb(
 
     # --- Save report ---
     os.makedirs(out_reports, exist_ok=True)
-    report_path = os.path.join(out_reports, f"{decile}_gb_{mode}_report.txt")
+    report_path = os.path.join(out_reports, f"{decile}_gb_walkforward_report.txt")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(f"decile: {decile}\n")
         f.write(f"file: {csv_path}\n")
         f.write(f"date_range: {start_ym} → {end_ym}\n")
         f.write(f"initial_train_months: {init_train_n} (through {train_end_ym})\n")
-        f.write(f"mode: {mode}\n")
+        f.write("mode: walkforward_early_stopping\n")
         f.write(f"oos_months: {len(wf['months'])} (through {wf['months'][-1]})\n")
         f.write(f"oos_r2: {wf['r2']}\n")
         f.write(f"oos_mae: {wf['mae']}\n")
@@ -343,12 +328,6 @@ def main():
         default=240,
         help="Initial training length (months).",
     )
-    parser.add_argument(
-        "--mode",
-        choices=["static", "walkforward"],
-        default="static",   # FAST by default
-        help="static = fit once; walkforward = refit each month (slower).",
-    )
 
     args = parser.parse_args()
 
@@ -356,7 +335,7 @@ def main():
     if len(files) == 0:
         raise FileNotFoundError(f"No files matched: {args.glob}")
 
-    print(f"Found {len(files)} feature files for GB RETURN training:")
+    print(f"Found {len(files)} feature files for GB RETURN training (walkforward + early stopping):")
     for fpath in files:
         print(" -", fpath)
 
@@ -367,7 +346,6 @@ def main():
                 out_preds=args.preds_dir,
                 out_reports=args.reports_dir,
                 prefer_train_months=args.train_months,
-                mode=args.mode,
             )
         except Exception as e:
             print(f"\n[ERROR] {fpath} -> {e}\n")
