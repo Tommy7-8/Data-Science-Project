@@ -23,10 +23,17 @@ from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 def select_lagged_features(df: pd.DataFrame, decile_prefix: str) -> List[str]:
     """
-    Same idea as in train_all_lr.py:
-    Use decile's own lags + its realized vol features + factor lags.
+    Select feature columns for a given decile.
+
+    We use:
+      - all columns starting with f"{decile_prefix}_lag" (return lags)
+      - all columns starting with f"{decile_prefix}_vol_" (realized vol features)
+      - all columns ending with "_lag1" (factor lags such as Mkt-RF_lag1, SMB_lag1)
+
+    Order is preserved: lags, then vols, then factor lags; duplicates removed.
     """
     cols = df.columns.tolist()
+
     lag_cols = [c for c in cols if c.startswith(f"{decile_prefix}_lag")]
     vol_cols = [c for c in cols if c.startswith(f"{decile_prefix}_vol_")]
     factor_lag_cols = [c for c in cols if c.endswith("_lag1")]
@@ -36,20 +43,47 @@ def select_lagged_features(df: pd.DataFrame, decile_prefix: str) -> List[str]:
         if c in df.columns and c not in seen:
             seen.add(c)
             ordered.append(c)
+
     return ordered
 
 
 def first_train_size(n_obs: int, prefer_train_months: int = 240, min_train: int = 120) -> int:
+    """
+    Decide the size of the initial training window.
+
+    Rules:
+      - at least min_train observations
+      - at most prefer_train_months
+      - always leave at least 1 observation for OOS prediction
+    """
     return max(min_train, min(prefer_train_months, n_obs - 1))
 
 
 def fit_ridge_cv(X_train, y_train, max_splits: int = 5):
+    """
+    Fit a Ridge model with standardization and time-series cross-validation.
+
+    Pipeline:
+      StandardScaler(with_mean=True, with_std=True) -> Ridge(random_state=0)
+
+    Hyperparameter:
+      - ridge__alpha in [0.1, 0.3, 1.0, 3.0, 10.0]
+
+    Cross-validation:
+      - TimeSeriesSplit with a number of splits depending on sample size.
+
+    Returns:
+        best_estimator, best_params_dict
+    """
     pipe = Pipeline([
         ("scaler", StandardScaler(with_mean=True, with_std=True)),
-        ("ridge", Ridge(random_state=0))
+        ("ridge", Ridge(random_state=0)),
     ])
+
     param_grid = {"ridge__alpha": [0.1, 0.3, 1.0, 3.0, 10.0]}
 
+    # Choose number of splits: at least 2, at most max_splits,
+    # roughly one split per ~60 observations, but never below 2.
     n_splits = max(2, min(max_splits, max(2, X_train.shape[0] // 60)))
     tscv = TimeSeriesSplit(n_splits=n_splits)
 
@@ -60,44 +94,76 @@ def fit_ridge_cv(X_train, y_train, max_splits: int = 5):
         cv=tscv,
         n_jobs=-1,
         refit=True,
-        verbose=0
+        verbose=0,
     )
     gscv.fit(X_train, y_train)
     return gscv.best_estimator_, gscv.best_params_
 
 
 # -------- robust loader for aligned feature CSVs (semicolon + padded) --------
+
 def load_feature_csv(path: str) -> pd.DataFrame:
     """
-    Reads the aligned feature CSVs written by prepare_features_full.py:
-      - semicolon-separated
-      - cells padded for alignment
-      - dot decimals
-    Also works for standard (un-padded) CSVs.
+    Read the aligned feature CSVs written by prepare_features_full.py.
+
+    These files:
+      - are semicolon-separated
+      - may have padded cells for alignment
+      - use dot decimals
+      - store dates in a 'date' column
+
+    This loader also works for standard (un-padded) CSVs.
+
+    Args:
+        path: path to the CSV file.
+
+    Returns:
+        DataFrame with numeric columns parsed where possible.
     """
+    # Peek at first line to detect semicolon-separated aligned format
     with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
         head = f.readline()
 
     if ";" in head:
-        df = pd.read_csv(path, sep=";", engine="python", dtype=str, encoding="utf-8-sig")
-        # normalize header
+        df = pd.read_csv(
+            path,
+            sep=";",
+            engine="python",
+            dtype=str,
+            encoding="utf-8-sig",
+        )
+        # Normalize header: strip whitespace and possible BOM char
         df.columns = [c.strip().lstrip("\ufeff") for c in df.columns]
-        # trim spaces on object columns
+
+        # Trim spaces on object (string) columns
         obj_cols = df.select_dtypes(include="object").columns
         df[obj_cols] = df[obj_cols].apply(lambda s: s.str.strip())
 
-        # convert non-date columns to numeric
+        # Convert non-date columns to numeric (empty strings -> NaN)
         for c in df.columns:
             if c != "date":
                 df[c] = pd.to_numeric(df[c].replace("", pd.NA), errors="coerce")
+
         return df
     else:
+        # Fallback: plain CSV
         return pd.read_csv(path, encoding="utf-8-sig")
 
 
 # ---------- aligned CSV writer for VOL OOS predictions ----------
+
 def fmt_num(val, max_decimals=6, dec_char="."):
-    """Format numbers without unnecessary trailing zeros (like other scripts)."""
+    """
+    Format numbers without unnecessary trailing zeros (consistent with other scripts).
+
+    Args:
+        val: numeric value or NaN.
+        max_decimals: maximum decimals to show.
+        dec_char: decimal separator to use ('.' by default).
+
+    Returns:
+        String representation ("" if NaN).
+    """
     if pd.isna(val):
         return ""
     s = f"{float(val):.{max_decimals}f}"
@@ -110,21 +176,33 @@ def fmt_num(val, max_decimals=6, dec_char="."):
 
 def write_aligned_oos_csv(df: pd.DataFrame, path: str, max_decimals: int = 6):
     """
-    Writes semicolon-separated, visually aligned CSV for OOS VOL predictions.
-    Assumes first column is 'month' and others are numeric.
+    Write semicolon-separated, visually aligned CSV for OOS VOL predictions.
+
+    Assumptions:
+        - First column is 'month' (string YYYY-MM).
+        - All other columns are numeric.
     """
     df_txt = df.copy()
+
+    # Format all non-month columns with fmt_num
     for c in df_txt.columns:
         if c != "month":
             df_txt[c] = df_txt[c].map(lambda v: fmt_num(v, max_decimals))
 
-    widths = {c: max(len(c), df_txt[c].astype(str).map(len).max()) for c in df_txt.columns}
+    # Column widths: max between header length and max cell length
+    widths = {
+        c: max(len(c), df_txt[c].astype(str).map(len).max())
+        for c in df_txt.columns
+    }
 
+    # Header row: month left-aligned, others right-aligned
     header_cells = [f"{'month':<{widths['month']}}"] + [
         f"{c:>{widths[c]}}" for c in df_txt.columns if c != "month"
     ]
 
     lines = [";".join(header_cells)]
+
+    # Data rows
     for _, row in df_txt.iterrows():
         left = f"{str(row['month']):<{widths['month']}}"
         nums = [f"{str(row[c]):>{widths[c]}}" for c in df_txt.columns if c != "month"]
@@ -141,16 +219,26 @@ def walkforward_predictions(X: np.ndarray,
                             init_train_n: int,
                             refit_each_step: bool = True) -> Dict[str, Any]:
     """
-    Same structure as in train_all_lr.py, but now y is 'risk' (squared return).
+    Perform walk-forward (or static) predictions for VOL targets.
+
+    Here y is a 'risk' measure (squared return for the decile).
+
+    Modes:
+      - refit_each_step=True ("walkforward"):
+            re-fit Ridge with CV every month using data up to t
+      - refit_each_step=False ("static"):
+            fit once on the initial training window, then reuse it
     """
     n = len(y)
     preds, truths, pred_months = [], [], []
     last_model, last_params = None, None
 
+    # In static mode, fit once on the initial window
     if not refit_each_step:
         model, params = fit_ridge_cv(X[:init_train_n], y[:init_train_n])
         last_model, last_params = model, params
 
+    # Walk-forward over all OOS months
     for t in range(init_train_n, n):
         if refit_each_step:
             model, params = fit_ridge_cv(X[:t], y[:t])
@@ -158,7 +246,7 @@ def walkforward_predictions(X: np.ndarray,
         else:
             model, params = last_model, last_params
 
-        y_hat = float(model.predict(X[t:t+1])[0])
+        y_hat = float(model.predict(X[t:t + 1])[0])
         preds.append(y_hat)
         truths.append(float(y[t]))
         pred_months.append(str(months[t]))
@@ -178,23 +266,37 @@ def walkforward_predictions(X: np.ndarray,
         "mae": mae,
         "r2": None if np.isnan(r2) else r2,
         "last_model": last_model,
-        "last_params": last_params
+        "last_params": last_params,
     }
 
 
 # ------------------------ Train one decile file ------------------------
 
 def _infer_decile_from_filename(base: str) -> str:
+    """
+    Infer the decile label (e.g. 'ME1') from a feature filename.
+
+    We try:
+      - pattern like 'features_ME1_...'
+      - pattern like 'features_ME1.csv'
+      - any underscore-separated token starting with 'ME' + digits
+
+    Raises:
+        ValueError if no decile pattern is found.
+    """
     m = re.search(r"features_(ME\d+)_", base)
     if m:
         return m.group(1)
+
     m2 = re.search(r"features_(ME\d+)\.csv$", base)
     if m2:
         return m2.group(1)
+
     parts = base.split("_")
     for p in parts:
         if p.startswith("ME") and p[2:].isdigit():
             return p
+
     raise ValueError(f"Could not infer decile from filename: {base}")
 
 
@@ -203,17 +305,33 @@ def train_one_file_vol(csv_path: str,
                        out_reports: str,
                        prefer_train_months: int = 240,
                        mode: str = "walkforward") -> Dict[str, Any]:
+    """
+    Train a Ridge model for volatility of a single ME decile and produce OOS predictions.
 
+    Volatility target:
+        - next-month squared return of the decile.
+
+    Steps:
+      - infer decile from filename
+      - load feature CSV
+      - compute next-month squared return as target
+      - build feature matrix using decile lags, vol features, factor lags
+      - pick initial training window size
+      - run walk-forward / static prediction
+      - save aligned CSV of predictions and a text report
+    """
     base = os.path.basename(csv_path)
     decile = _infer_decile_from_filename(base)
 
     df = load_feature_csv(csv_path)
 
+    # Ensure we have a usable date column
     if "date" not in df.columns:
         raise ValueError(f"'date' column not found in {csv_path}")
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
 
+    # Check that this decile exists in the CSV
     if decile not in df.columns:
         raise ValueError(f"{decile} column not found in {csv_path}")
 
@@ -221,8 +339,11 @@ def train_one_file_vol(csv_path: str,
     df["ret_next"] = df[decile].shift(-1)
     df["target"] = df["ret_next"] ** 2
     df["target_month"] = df["date"].shift(-1).dt.to_period("M").astype(str)
+
+    # Drop rows where target or target_month is missing (typically last row)
     df = df.dropna(subset=["target", "target_month"]).copy()
 
+    # Build feature set: decile lags, its vol features, factor lags
     feature_cols = select_lagged_features(df, decile_prefix=decile)
     if len(feature_cols) == 0:
         raise ValueError(f"No lagged features found in {csv_path} for {decile}.")
@@ -231,43 +352,59 @@ def train_one_file_vol(csv_path: str,
     y = df["target"].values
     months = df["target_month"].values
 
+    # Determine initial training window size
     n = len(df)
-    init_train_n = first_train_size(n, prefer_train_months=prefer_train_months, min_train=120)
+    init_train_n = first_train_size(
+        n,
+        prefer_train_months=prefer_train_months,
+        min_train=120,
+    )
     if init_train_n >= n:
-        raise ValueError(f"Not enough data after initial training window in {decile} (n={n}).")
+        raise ValueError(
+            f"Not enough data after initial training window in {decile} (n={n})."
+        )
 
+    # Run walk-forward / static prediction
     wf = walkforward_predictions(
         X, y, months,
         init_train_n=init_train_n,
-        refit_each_step=(mode == "walkforward")
+        refit_each_step=(mode == "walkforward"),
     )
 
+    # Summarize to console
     start_ym = df["date"].iloc[0].to_period("M")
-    end_ym   = df["date"].iloc[-1].to_period("M")
+    end_ym = df["date"].iloc[-1].to_period("M")
     train_end_ym = df["date"].iloc[init_train_n - 1].to_period("M")
+
     print(f"\n=== {decile} (VOL LR) ===")
     print(f"File: {csv_path}")
     print(f"Date range: {start_ym} → {end_ym}")
     print(f"Initial TRAIN: {start_ym} → {train_end_ym}  ({init_train_n} months)")
     print(f"OOS months: {len(wf['months'])} (through {wf['months'][-1]})")
+
     r2_str = "n/a" if wf["r2"] is None else f"{wf['r2']:.4f}"
-    print(f"OOS R² (vol target): {r2_str} | MAE: {wf['mae']:.6f} | RMSE: {wf['rmse']:.6f}")
+    print(
+        f"OOS R² (vol target): {r2_str} | "
+        f"MAE: {wf['mae']:.6f} | RMSE: {wf['rmse']:.6f}"
+    )
     if wf["last_params"] is not None:
         print(f"Last alpha: {wf['last_params']['ridge__alpha']}")
 
     # --- Save VOL predictions (LR) as aligned CSV ---
     os.makedirs(out_preds, exist_ok=True)
     preds_path = os.path.join(out_preds, f"{decile}_oos_vol_preds_lr.csv")
+
     preds_df = pd.DataFrame({
         "month": wf["months"],
         "y_true": wf["y_true"],   # true squared return
-        "y_pred": wf["y_pred"]    # predicted squared return
+        "y_pred": wf["y_pred"],   # predicted squared return
     })
     write_aligned_oos_csv(preds_df, preds_path, max_decimals=6)
 
     # --- Save VOL report (LR) ---
     os.makedirs(out_reports, exist_ok=True)
     report_path = os.path.join(out_reports, f"{decile}_vol_report_lr.txt")
+
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(f"decile: {decile}\n")
         f.write(f"file: {csv_path}\n")
@@ -284,25 +421,54 @@ def train_one_file_vol(csv_path: str,
         "decile": decile,
         "preds_path": preds_path,
         "report_path": report_path,
-        "metrics": {"r2": wf["r2"], "mae": wf["mae"], "rmse": wf["rmse"]},
-        "oos_last_month": wf["months"][-1]
+        "metrics": {
+            "r2": wf["r2"],
+            "mae": wf["mae"],
+            "rmse": wf["rmse"],
+        },
+        "oos_last_month": wf["months"][-1],
     }
 
 
 # ----------------------------- Main -----------------------------
 
 def main():
+    """
+    CLI entry point: train volatility LR models for all ME deciles.
+
+    It:
+      - finds all features_ME*_full.csv files (via glob)
+      - trains a Ridge model for the volatility of each decile
+      - writes OOS volatility prediction CSVs and text reports
+    """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--glob", default="data/processed/features_ME*_full.csv",
-                        help="Glob pattern for decile feature files.")
-    parser.add_argument("--preds_dir", default="results/oos_vol_preds_lr",
-                        help="Where to save LR VOL OOS predictions.")
-    parser.add_argument("--reports_dir", default="results/reports_vol_lr",
-                        help="Where to save LR VOL text reports.")
-    parser.add_argument("--train_months", type=int, default=240,
-                        help="Initial training length (months).")
-    parser.add_argument("--mode", choices=["walkforward", "static"], default="walkforward",
-                        help="'walkforward' (refit monthly) or 'static' (fit once).")
+    parser.add_argument(
+        "--glob",
+        default="data/processed/features_ME*_full.csv",
+        help="Glob pattern for decile feature files.",
+    )
+    parser.add_argument(
+        "--preds_dir",
+        default="results/oos_vol_preds_lr",
+        help="Where to save LR VOL OOS predictions.",
+    )
+    parser.add_argument(
+        "--reports_dir",
+        default="results/reports_vol_lr",
+        help="Where to save LR VOL text reports.",
+    )
+    parser.add_argument(
+        "--train_months",
+        type=int,
+        default=240,
+        help="Initial training length (months).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["walkforward", "static"],
+        default="walkforward",
+        help="'walkforward' (refit monthly) or 'static' (fit once).",
+    )
     args = parser.parse_args()
 
     files = sorted(glob.glob(args.glob))
@@ -313,6 +479,8 @@ def main():
     for f in files:
         print(" -", f)
 
+    # Train volatility model for each decile file;
+    # keep going even if some files fail.
     for f in files:
         try:
             _ = train_one_file_vol(
@@ -320,7 +488,7 @@ def main():
                 out_preds=args.preds_dir,
                 out_reports=args.reports_dir,
                 prefer_train_months=args.train_months,
-                mode=args.mode
+                mode=args.mode,
             )
         except Exception as e:
             print(f"\n[ERROR] {f} -> {e}\n")

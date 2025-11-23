@@ -1,5 +1,5 @@
 {
-  "method": "GB mean-variance",
+  "method": "GB mean-variance allocation",
   "weight_cap": 0.4,
   "inputs": {
     "gb_pred_returns": "results\\oos_panel_gb\\preds_panel_gb.csv",
