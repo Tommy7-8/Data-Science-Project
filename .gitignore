@@ -4,5 +4,8 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Virtual environment
+.venv/
+
 # Data artifacts (keep folders, ignore CSVs)
 data/**/*.csv

@@ -246,7 +246,7 @@ def make_gbm() -> HistGradientBoostingRegressor:
         inside each training window.
     """
     return HistGradientBoostingRegressor(
-        random_state=0,
+        random_state=42,
         max_iter=1000,          # upper bound on trees
         learning_rate=0.05,
         max_depth=3,

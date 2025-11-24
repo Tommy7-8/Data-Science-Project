@@ -1,4 +1,5 @@
-Predicting and Allocating Across Fama–French Size Portfolios with Machine Learning
+# Predicting and Allocating Across Fama–French Size Portfolios with Machine Learning
+# Name: Papuga Tomas
 
 This project studies return and risk patterns of U.S. equities sorted by firm size using monthly data from the Kenneth R. French Data Library.
 
