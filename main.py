@@ -7,9 +7,10 @@ It sequentially executes the existing scripts under src/:
 
 1) Download & prepare data
 2) Train LR & GB return models + vol models
-3) Build prediction panels
-4) Run allocations and evaluations
-5) Run benchmark comparisons and plots
+3) Summarise forecast metrics (LR vs GB, return & vol)
+4) Build prediction panels
+5) Run allocations and evaluations
+6) Run benchmark comparisons and plots
 """
 
 import logging
@@ -56,19 +57,23 @@ def run_full_pipeline():
     run_step("Training GB volatility models",
              "src.models.train_all_gb_vol")
 
-    # 5) Build prediction panels
+    # 5) Summarise forecast metrics (R2, MAE, RMSE for LR vs GB)
+    run_step("Summarising forecast metrics",
+             "src.utils.summarise_forecast_metrics")
+
+    # 6) Build prediction panels
     run_step("Building LR prediction panels",
              "src.utils.build_lr_panel")
     run_step("Building GB prediction panels",
              "src.utils.build_gb_panels")
 
-    # 6) Run allocations
+    # 7) Run allocations
     run_step("Running allocation using LR forecasts",
              "src.alloc.run_allocation_lr")
     run_step("Running allocation using GB forecasts",
              "src.alloc.run_allocation_gb")
 
-    # 7) Evaluate allocations
+    # 8) Evaluate allocations
     run_step("Evaluating LR allocation",
              "src.alloc.evaluate_allocation_lr")
     run_step("Evaluating GB allocation",
@@ -76,7 +81,7 @@ def run_full_pipeline():
     run_step("Comparing LR vs GB allocation summaries",
              "src.alloc.compare_allocation_summaries")
 
-    # 8) Benchmarks / plots
+    # 9) Benchmarks / plots
     run_step("Comparing strategy vs benchmarks",
              "src.benchmark.compare_benchmarks")
     run_step("Plotting cumulative returns",
