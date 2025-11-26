@@ -237,7 +237,7 @@ def walkforward_predictions(
     init_train_n: int,
 ) -> Dict[str, Any]:
     """
-    Pure walk-forward scheme for GBM.
+    Pure walk-forward scheme for GBM (walk-forward only).
 
     For t = init_train_n, ..., n-1:
       - Fit a new GBM on data up to (but excluding) t, i.e. X[:t], y[:t]
@@ -449,7 +449,7 @@ def train_one_file_gb(
 
 def main():
     """
-    CLI entry point: train GBM return models for all ME deciles.
+    CLI entry point: train GBM return models for all ME deciles (walk-forward only).
 
     It:
       - finds all features_ME*_full.csv files
@@ -485,8 +485,10 @@ def main():
     if len(files) == 0:
         raise FileNotFoundError(f"No files matched: {args.glob}")
 
-    print("Found {} feature files for GB RETURN training (walkforward + early stopping):"
-          .format(len(files)))
+    print(
+        "Found {} feature files for GB RETURN training (walkforward + early stopping):"
+        .format(len(files))
+    )
     for fpath in files:
         print(" -", fpath)
 

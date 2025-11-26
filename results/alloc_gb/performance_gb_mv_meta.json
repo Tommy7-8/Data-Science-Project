@@ -1,11 +1,11 @@
 {
-  "mean_monthly_return": 0.010820715926865673,
-  "annualized_return": 0.13786203176202494,
-  "annualized_volatility": 0.1745232036310981,
-  "sharpe_ratio": 0.7440190669250955,
-  "max_drawdown": -0.5212496623335953,
-  "avg_turnover": 0.2439107579957356,
-  "avg_turnover_after_limit": 0.1659185207889126,
+  "mean_monthly_return": 0.011035691409808103,
+  "annualized_return": 0.14076935762929166,
+  "annualized_volatility": 0.17488028919646414,
+  "sharpe_ratio": 0.7572511317666253,
+  "max_drawdown": -0.534625171961373,
+  "avg_turnover": 0.23083826759061835,
+  "avg_turnover_after_limit": 0.16332818923240938,
   "transaction_cost": 0.001,
   "turnover_limit": 0.2
 }

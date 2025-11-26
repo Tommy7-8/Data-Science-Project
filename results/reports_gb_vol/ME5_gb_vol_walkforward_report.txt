@@ -5,6 +5,6 @@ initial_train_months: 240 (through 1947-06)
 mode: walkforward_early_stopping
 vol_target_col: ME5_vol_3m
 oos_months: 938 (through 2025-09)
-oos_r2: 0.36443173818278596
-oos_mae: 0.013843384742277209
-oos_rmse: 0.018781461187853912
+oos_r2: 0.39365559052810184
+oos_mae: 0.013462450300868383
+oos_rmse: 0.018344588112010438

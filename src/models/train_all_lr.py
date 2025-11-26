@@ -206,31 +206,21 @@ def walkforward_predictions(
     y: np.ndarray,
     months: np.ndarray,
     init_train_n: int,
-    refit_each_step: bool = True,
 ) -> Dict[str, Any]:
     """
-    Perform walk-forward (or static) predictions with Ridge.
+    Perform walk-forward predictions with Ridge.
 
-    Modes:
-      - refit_each_step=True ("walkforward"):
-            re-fit Ridge with CV every month using all data up to t
-      - refit_each_step=False ("static"):
-            fit once on the initial training window, then keep using it
+    For each month t >= init_train_n:
+      - re-fit Ridge with CV using all data up to t-1
+      - record a one-step-ahead prediction for month t
     """
     n = len(y)
     preds, truths, pred_months = [], [], []
     last_model, last_params = None, None
 
-    if not refit_each_step:
-        model, params = fit_ridge_cv(X[:init_train_n], y[:init_train_n])
-        last_model, last_params = model, params
-
     for t in range(init_train_n, n):
-        if refit_each_step:
-            model, params = fit_ridge_cv(X[:t], y[:t])
-            last_model, last_params = model, params
-        else:
-            model, params = last_model, last_params
+        model, params = fit_ridge_cv(X[:t], y[:t])
+        last_model, last_params = model, params
 
         y_hat = float(model.predict(X[t:t + 1])[0])
         preds.append(y_hat)
@@ -291,10 +281,10 @@ def train_one_file(
     out_preds: str,
     out_reports: str,
     prefer_train_months: int = 240,
-    mode: str = "walkforward",
 ) -> Dict[str, Any]:
     """
-    Train Ridge for a single decile feature file and produce OOS predictions.
+    Train Ridge for a single decile feature file and produce OOS predictions
+    under a walk-forward expanding-window scheme.
     """
     base = os.path.basename(csv_path)
     decile = _infer_decile_from_filename(base)
@@ -338,7 +328,6 @@ def train_one_file(
         y,
         months,
         init_train_n=init_train_n,
-        refit_each_step=(mode == "walkforward"),
     )
 
     start_ym = df["date"].iloc[0].to_period("M")
@@ -354,7 +343,7 @@ def train_one_file(
     r2_str = "n/a" if wf["r2"] is None else f"{wf['r2']:.4f}"
     print(f"OOS R²: {r2_str} | MAE: {wf['mae']:.6f} | RMSE: {wf['rmse']:.6f}")
     if wf["last_params"] is not None:
-        print(f"Last alpha: {wf["last_params"]["ridge__alpha"]}")
+        print(f"Last alpha: {wf['last_params']['ridge__alpha']}")
 
     # --- Save OOS predictions (LR) as aligned CSV ---
     os.makedirs(out_preds, exist_ok=True)
@@ -400,7 +389,7 @@ def train_one_file(
 
 def main():
     """
-    CLI: train LR models for all deciles based on feature CSVs.
+    CLI: train LR models for all deciles based on feature CSVs (walk-forward only).
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -424,12 +413,6 @@ def main():
         default=240,
         help="Initial training length (months).",
     )
-    parser.add_argument(
-        "--mode",
-        choices=["walkforward", "static"],
-        default="walkforward",
-        help="'walkforward' (refit monthly) or 'static' (fit once).",
-    )
     args = parser.parse_args()
 
     files = sorted(glob.glob(args.glob))
@@ -447,7 +430,6 @@ def main():
                 out_preds=args.preds_dir,
                 out_reports=args.reports_dir,
                 prefer_train_months=args.train_months,
-                mode=args.mode,
             )
         except Exception as e:
             print(f"\n[ERROR] {fpath} -> {e}\n")

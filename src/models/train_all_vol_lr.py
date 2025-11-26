@@ -213,38 +213,29 @@ def write_aligned_oos_csv(df: pd.DataFrame, path: str, max_decimals: int = 6):
 
 # ------------------------ Walk-forward core ------------------------
 
-def walkforward_predictions(X: np.ndarray,
-                            y: np.ndarray,
-                            months: np.ndarray,
-                            init_train_n: int,
-                            refit_each_step: bool = True) -> Dict[str, Any]:
+def walkforward_predictions(
+    X: np.ndarray,
+    y: np.ndarray,
+    months: np.ndarray,
+    init_train_n: int,
+) -> Dict[str, Any]:
     """
-    Perform walk-forward (or static) predictions for VOL targets.
+    Perform walk-forward predictions for VOL targets.
 
     Here y is a 'risk' measure (squared return for the decile).
 
-    Modes:
-      - refit_each_step=True ("walkforward"):
-            re-fit Ridge with CV every month using data up to t
-      - refit_each_step=False ("static"):
-            fit once on the initial training window, then reuse it
+    For each month t >= init_train_n:
+      - re-fit Ridge with CV using data up to t-1
+      - record a one-step-ahead prediction for month t
     """
     n = len(y)
     preds, truths, pred_months = [], [], []
     last_model, last_params = None, None
 
-    # In static mode, fit once on the initial window
-    if not refit_each_step:
-        model, params = fit_ridge_cv(X[:init_train_n], y[:init_train_n])
-        last_model, last_params = model, params
-
-    # Walk-forward over all OOS months
+    # Walk-forward over all OOS months (always refit each step)
     for t in range(init_train_n, n):
-        if refit_each_step:
-            model, params = fit_ridge_cv(X[:t], y[:t])
-            last_model, last_params = model, params
-        else:
-            model, params = last_model, last_params
+        model, params = fit_ridge_cv(X[:t], y[:t])
+        last_model, last_params = model, params
 
         y_hat = float(model.predict(X[t:t + 1])[0])
         preds.append(y_hat)
@@ -300,11 +291,12 @@ def _infer_decile_from_filename(base: str) -> str:
     raise ValueError(f"Could not infer decile from filename: {base}")
 
 
-def train_one_file_vol(csv_path: str,
-                       out_preds: str,
-                       out_reports: str,
-                       prefer_train_months: int = 240,
-                       mode: str = "walkforward") -> Dict[str, Any]:
+def train_one_file_vol(
+    csv_path: str,
+    out_preds: str,
+    out_reports: str,
+    prefer_train_months: int = 240,
+) -> Dict[str, Any]:
     """
     Train a Ridge model for volatility of a single ME decile and produce OOS predictions.
 
@@ -317,7 +309,7 @@ def train_one_file_vol(csv_path: str,
       - compute next-month squared return as target
       - build feature matrix using decile lags, vol features, factor lags
       - pick initial training window size
-      - run walk-forward / static prediction
+      - run walk-forward prediction
       - save aligned CSV of predictions and a text report
     """
     base = os.path.basename(csv_path)
@@ -364,11 +356,12 @@ def train_one_file_vol(csv_path: str,
             f"Not enough data after initial training window in {decile} (n={n})."
         )
 
-    # Run walk-forward / static prediction
+    # Run walk-forward prediction
     wf = walkforward_predictions(
-        X, y, months,
+        X,
+        y,
+        months,
         init_train_n=init_train_n,
-        refit_each_step=(mode == "walkforward"),
     )
 
     # Summarize to console
@@ -434,7 +427,7 @@ def train_one_file_vol(csv_path: str,
 
 def main():
     """
-    CLI entry point: train volatility LR models for all ME deciles.
+    CLI entry point: train volatility LR models for all ME deciles (walk-forward only).
 
     It:
       - finds all features_ME*_full.csv files (via glob)
@@ -463,12 +456,6 @@ def main():
         default=240,
         help="Initial training length (months).",
     )
-    parser.add_argument(
-        "--mode",
-        choices=["walkforward", "static"],
-        default="walkforward",
-        help="'walkforward' (refit monthly) or 'static' (fit once).",
-    )
     args = parser.parse_args()
 
     files = sorted(glob.glob(args.glob))
@@ -488,7 +475,6 @@ def main():
                 out_preds=args.preds_dir,
                 out_reports=args.reports_dir,
                 prefer_train_months=args.train_months,
-                mode=args.mode,
             )
         except Exception as e:
             print(f"\n[ERROR] {f} -> {e}\n")

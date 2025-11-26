@@ -4,6 +4,6 @@ date_range: 1927-07 → 2025-08
 initial_train_months: 240 (through 1947-06)
 mode: walkforward_early_stopping
 oos_months: 938 (through 2025-09)
-oos_r2: -0.03559801782432648
-oos_mae: 0.04509345592155063
-oos_rmse: 0.06138618316979105
+oos_r2: -0.017362943453838264
+oos_mae: 0.04478514430150969
+oos_rmse: 0.06084333109208541

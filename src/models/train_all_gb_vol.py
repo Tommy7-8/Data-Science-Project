@@ -1,6 +1,6 @@
 # src/models/train_all_gb_vol.py
 # Train Gradient Boosting per decile and produce WALK-FORWARD *volatility* predictions (GB version),
-# with early stopping.
+# with early stopping, for all ME deciles.
 #
 # Outputs (per decile, GB VOL):
 #   - results/oos_vol_gb/MEj_oos_vol_preds_gb.csv
@@ -19,7 +19,7 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
-# Kept for reference (not used directly in this script, but documents the setup)
+# Kept for reference (not used directly here, but documents the setup)
 N_LAGS = 12
 
 
@@ -265,7 +265,7 @@ def walkforward_predictions(
     init_train_n: int,
 ) -> Dict[str, Any]:
     """
-    Pure walk-forward scheme (GBM with early stopping).
+    Pure walk-forward scheme (GBM with early stopping, walk-forward ONLY).
 
     For t = init_train_n, ..., n-1:
       - Fit GBM on data up to (but excluding) t: X[:t], y[:t]
@@ -478,7 +478,7 @@ def train_one_file_gb_vol(
 
 def main():
     """
-    CLI entry point: train GBM volatility models for all ME deciles.
+    CLI entry point: train GBM volatility models for all ME deciles (walk-forward only).
 
     It:
       - finds all features_ME*_full.csv files
@@ -489,7 +489,7 @@ def main():
     parser.add_argument(
         "--glob",
         default="data/processed/features_ME*_full.csv",
-        help="Glob pattern for decile feature files.",
+            help="Glob pattern for decile feature files.",
     )
     parser.add_argument(
         "--preds_dir",

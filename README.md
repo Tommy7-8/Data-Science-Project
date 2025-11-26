@@ -17,11 +17,15 @@ pip install -r requirements.txt
 ## Usage
 python main.py  
 
+## Runtime
+Due to the large sample and the expanding-window walk-forward training for all ME1–ME10 portfolios (returns and volatility, LR and GB), a full run of the pipeline typically takes **around 1 hour** on a standard modern laptop.
+
 ## Expected Output
 Full pipeline execution including:
 - Data download from the Kenneth R. French Data Library  
 - Feature construction (lagged returns, rolling volatility, factor lags)  
 - Training LR and GB models for returns and volatility  
+- Aggregating per-decile forecast metrics into `results/forecast_metrics/forecast_metrics_summary.txt`  
 - Building prediction panels for ME1–ME10  
 - Running LR and GB mean–variance allocations  
 - Evaluating realized performance with turnover limits and transaction costs  
@@ -45,7 +49,9 @@ fama-french-ml-project/
 │   ├── utils/  
 │   │   ├── prepare_features_full.py # Build lag/vol/factor features  
 │   │   ├── build_lr_panel.py        # LR prediction panel  
-│   │   └── build_gb_panels.py       # GB prediction panels  
+│   │   ├── build_gb_panels.py       # GB prediction panels  
+│   │   └── summarise_forecast_metrics.py
+│   │                                # Aggregate LR/GB forecast metrics (R², MAE, RMSE)
 │   │  
 │   ├── models/  
 │   │   ├── train_all_lr.py          # LR return models  
@@ -65,15 +71,17 @@ fama-french-ml-project/
 │       └── plot_cumulative_returns.py  
 │  
 └── results/  
-    ├── oos_panel_lr/  
-    ├── oos_panel_gb/  
-    ├── alloc_lr/  
-    ├── alloc_gb/  
-    ├── alloc_comparison/  
-    └── benchmark/  
+    ├── oos_panel_lr/                # LR prediction panels (returns / vol)  
+    ├── oos_panel_gb/                # GB prediction panels (returns / vol)  
+    ├── alloc_lr/                    # LR allocation weights and returns  
+    ├── alloc_gb/                    # GB allocation weights and returns  
+    ├── alloc_comparison/            # LR vs GB allocation summaries  
+    ├── forecast_metrics/            # LR vs GB forecast metrics summary  
+    └── benchmark/                   # Benchmark panels, summary stats, plots  
 
 ## Results
-- LR and GB out-of-sample forecasts  
+- LR and GB out-of-sample forecasts (returns and volatility)  
+- Aggregated LR vs GB forecast metrics in `results/forecast_metrics/forecast_metrics_summary.txt`  
 - Mean–variance allocations for LR and GB  
 - Net portfolio returns after turnover limits and transaction costs  
 - Benchmark comparison versus EW10 and the Market  
