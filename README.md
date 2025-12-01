@@ -11,7 +11,7 @@ Do machine-learning forecasts of next-month return and volatility improve portfo
 
 ### Create environment
 python -m venv .venv  
-.\.venv\Scripts\activate  
+.venv\Scripts\activate  
 pip install -r requirements.txt  
 
 ## Usage
