@@ -16,7 +16,7 @@ I used ChatGPT mainly to:
   walk-forward evaluation);
 - discuss possible ways to structure the data / feature / modelling / allocation pipeline;
 - get suggestions for improving the clarity and wording of parts of the written report;
-- obtain alternative phrasings and refinements for some **code comments and short explanations**
+- obtain alternative phrasings and refinements for some code comments and short explanations
   of functions or scripts, to better document what certain components do.
 
 All final modelling, implementation and wording decisions are my own, and I reviewed any
