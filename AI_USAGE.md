@@ -5,7 +5,7 @@ This document briefly describes how I used AI tools while working on the project
 
 ## Tools
 
-- **ChatGPT (GPT-5.1 Thinking)**
+- **ChatGPT (GPT-5.1)**
 - **GitHub Copilot** in Visual Studio Code
 
 ## ChatGPT (GPT-5.1 Thinking)
