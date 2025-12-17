@@ -1,9 +1,9 @@
 decile: ME9
 file: data/processed\features_ME9_full.csv
-date_range: 1927-07 → 2025-08
+date_range: 1927-07 → 2025-09
 initial_train_months: 240 (through 1947-06)
 mode: walkforward_early_stopping
-oos_months: 938 (through 2025-09)
-oos_r2: -0.04071960051588208
-oos_mae: 0.034636365578714315
-oos_rmse: 0.04541226703925257
+oos_months: 939 (through 2025-10)
+oos_r2: -0.04070505686515702
+oos_mae: 0.03461697143013256
+oos_rmse: 0.04539124439926057

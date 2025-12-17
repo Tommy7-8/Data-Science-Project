@@ -1,7 +1,9 @@
-# src/alloc/evaluate_allocation_gb_mv.py
-# Evaluate realized portfolio performance for GB-based weights using true LR returns.
+# src/alloc/evaluate_allocation_gb.py
+# Evaluate realized portfolio performance for GB-based weights using true realized returns.
 #
 # This script mirrors the LR evaluation logic, but for the GB mean–variance allocator.
+# Note: the turnover cap is applied only inside the transaction-cost penalty
+# (it does not constrain the portfolio weights).
 #
 # Inputs:
 #   - results/alloc_gb/weights_gb_mv.csv         (GB allocation weights, ME1..ME10)
@@ -141,7 +143,7 @@ def main() -> None:
       2. Align both on 'month'.
       3. Compute:
            - gross portfolio return
-           - turnover and turnover_limited
+           - turnover and turnover_limited (cap only affects the cost penalty)
            - net returns after transaction costs
       4. Derive summary performance statistics:
            - mean monthly return, annualized return/vol, Sharpe, max drawdown

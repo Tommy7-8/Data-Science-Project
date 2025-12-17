@@ -1,6 +1,8 @@
 # src/alloc/evaluate_allocation_lr.py
 # Evaluate realized portfolio performance for LR weights using true returns.
-# Includes transaction costs and turnover limits for realism.
+# Includes transaction costs.
+# Note: the turnover cap is applied only inside the transaction-cost penalty
+# (it does not constrain the portfolio weights).
 #
 # Inputs:
 #   - results/alloc_lr/weights_baseline.csv      (LR allocation weights, ME1..ME10)
@@ -147,11 +149,11 @@ def main() -> None:
       1. Load LR weights and true ME returns (semicolon-aligned CSVs).
       2. Align them by month and compute:
            - gross monthly portfolio returns
-           - turnover and turnover after applying the cap
+           - turnover and turnover after applying the cap (for transaction-cost penalty)
            - net returns after transaction costs
       3. Compute summary statistics:
            - mean monthly return, annualized return/vol, Sharpe, max drawdown
-           - average turnover before and after turnover limit
+           - average turnover before and after the turnover cap (cost penalty)
       4. Save monthly performance CSV and JSON summary.
     """
     root = Path.cwd()
@@ -199,7 +201,7 @@ def main() -> None:
     # Element-wise multiply then sum across deciles
     df["gross_ret"] = (df[w_cols].values * df[ret_cols].values).sum(axis=1)
 
-    # ---- Compute turnover and apply turnover limits ----
+    # ---- Compute turnover and apply turnover cap (for transaction-cost penalty only) ----
     # Build a clean weights-only DF with ME1..ME10 columns for turnover calculation
     W_clean = df[w_cols].rename(columns={f"{d}_w": d for d in deciles})
     W_clean["month"] = df["month"]

@@ -1,20 +1,25 @@
 # src/alloc/run_allocation_gb.py
-# Mean–variance allocator using **Gradient Boosting (GB)** predicted returns and
-# GB predicted volatility (squared returns).
+# Mean–variance allocator using Gradient Boosting (GB) predicted returns and
+# GB predicted *volatility* (a standard-deviation-like realized-vol forecast).
 #
 # Inputs:
-#   results/oos_panel_gb/preds_panel_gb.csv         — GB predicted returns
-#   results/oos_vol_panel_gb/preds_vol_panel_gb.csv — GB predicted squared returns
-#   results/oos_panel_lr/true_panel_lr.csv          — realized ME1..ME10 returns
+#   results/oos_panel_gb/preds_panel_gb.csv         — GB predicted returns (μ̂)
+#   results/oos_vol_panel_gb/preds_vol_panel_gb.csv — GB predicted volatility (σ̂)
+#   results/oos_panel_lr/true_panel_lr.csv          — realized ME1..ME10 returns (used to estimate Σ)
 #
 # Outputs:
 #   results/alloc_gb/weights_gb_mv.csv        — monthly ME1..ME10 portfolio weights
 #   results/alloc_gb/weights_gb_mv_meta.json  — metadata + settings
 #
+# Notes:
+#   - The GB “vol” panel contains volatility, not variance. We convert via:
+#       σ̂² = (max(σ̂, 0))²
+#   - No transaction costs here; evaluation is handled in evaluate_allocation_gb.py.
+#
 # The allocator:
-#   - builds Σ_t from realized returns + shrinkage + predicted diagonal vol
-#   - uses Σ^{-1} μ direction and projects on long-only capped simplex
-#   - no transaction costs; pure allocation stage (evaluation is separate)
+#   - builds Σ_t from a rolling window of realized returns, with shrinkage,
+#     and a blended diagonal using σ̂²
+#   - uses Σ^{-1} μ direction and projects to a long-only capped simplex
 
 import json
 from pathlib import Path
@@ -25,7 +30,7 @@ import pandas as pd
 # ---------- input/output paths ----------
 
 REL_PREDS_RET = Path("results/oos_panel_gb/preds_panel_gb.csv")      # μ̂ from GB
-REL_PREDS_VOL = Path("results/oos_vol_panel_gb/preds_vol_panel_gb.csv")  # σ̂² (GB)
+REL_PREDS_VOL = Path("results/oos_vol_panel_gb/preds_vol_panel_gb.csv")  # σ̂ (GB)
 REL_TRUE_RET = Path("results/oos_panel_lr/true_panel_lr.csv")        # realized returns
 
 REL_OUT_DIR = Path("results/alloc_gb")
@@ -184,7 +189,7 @@ def build_covariance(hist: np.ndarray, pred_var: np.ndarray) -> np.ndarray:
     diagS = np.diag(np.diag(S))
     Sigma = (1 - SHRINKAGE) * S + SHRINKAGE * diagS
 
-    # blend diagonal with predicted variance
+    # blend diagonal with predicted variance (σ̂² from the vol forecast)
     diagSigma = np.diag(Sigma)
     blended = VOL_BLEND * diagSigma + (1 - VOL_BLEND) * pred_var
     np.fill_diagonal(Sigma, blended)
@@ -225,7 +230,10 @@ def main() -> None:
     # Walk month by month
     for idx, row in df.iterrows():
         mu = np.array([row[f"{d}_ret"] for d in dec], float)
-        pred_var = np.array([row[f"{d}_vol"] for d in dec], float)
+        pred_vol = np.array([row[f"{d}_vol"] for d in dec], float)
+        # GB vol model outputs volatility (std-like). Convert to variance for Σ.
+        pred_vol = np.nan_to_num(pred_vol, nan=0.0, posinf=0.0, neginf=0.0)
+        pred_var = np.maximum(pred_vol, 0.0) ** 2
 
         # Historical window for covariance
         start = max(0, idx - COV_WINDOW)

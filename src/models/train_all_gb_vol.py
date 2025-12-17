@@ -61,13 +61,13 @@ def infer_vol_target_col(df: pd.DataFrame, decile_prefix: str) -> str:
     Infer which column to treat as the *base* volatility measure for this decile.
 
     We assume columns like:
-      - ME1_vol_1, ME1_vol_3, ME1_vol_6, ...
-    and we want the shortest horizon (usually vol_1).
+      - ME1_vol_3m, ME1_vol_6m, ME1_vol_12m, ...
+    and we want the shortest horizon available (usually vol_3m).
 
     Strategy:
-      1. If MEk_vol_1 or MEk_vol1 exists, use that.
-      2. Otherwise, among all MEk_vol* columns, pick the one with the
-         smallest numeric suffix after "vol".
+      1. If MEk_vol_3m (or MEk_vol_3) exists, use that.
+      2. Otherwise, among all MEk_vol* columns, pick the one with the smallest
+         numeric horizon after "vol" (e.g. 6 < 12).
 
     Args:
         df: feature DataFrame.
@@ -81,7 +81,7 @@ def infer_vol_target_col(df: pd.DataFrame, decile_prefix: str) -> str:
         raise ValueError(f"No volatility columns found for {decile_prefix} in dataframe.")
 
     # Prefer explicit _vol_1 or vol1 if present
-    for pat in (f"{decile_prefix}_vol_1", f"{decile_prefix}_vol1"):
+    for pat in (f"{decile_prefix}_vol_3m", f"{decile_prefix}_vol_3", f"{decile_prefix}_vol3"):
         if pat in vol_candidates:
             return pat
 
@@ -389,6 +389,8 @@ def train_one_file_gb_vol(
 
     # Next-month volatility as target
     df["target"] = df[vol_target_col].shift(-1)
+    # realized volatility should be non-negative; guard against any numeric noise
+    df["target"] = df["target"].clip(lower=0.0)
     df["target_month"] = df["date"].shift(-1).dt.to_period("M").astype(str)
     df = df.dropna(subset=["target", "target_month"]).copy()
 

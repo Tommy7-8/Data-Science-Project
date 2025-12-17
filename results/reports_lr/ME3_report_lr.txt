@@ -1,9 +1,9 @@
 decile: ME3
 file: data/processed\features_ME3_full.csv
-date_range: 1927-07 → 2025-08
+date_range: 1927-07 → 2025-09
 initial_train_months: 240 (through 1947-06)
-oos_months: 938 (through 2025-09)
-oos_r2: -0.07358049731729355
-oos_mae: 0.04539807295167689
-oos_rmse: 0.059674996244841114
+oos_months: 939 (through 2025-10)
+oos_r2: -0.07358300613658253
+oos_mae: 0.04535360871494574
+oos_rmse: 0.059643330646696475
 last_alpha: 10.0
